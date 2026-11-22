@@ -48,4 +48,11 @@ An `unknown` is declared with its reason, carried to the verdict math, and never
 
 ## Changes
 
+- `0.3.0` — probes speak each member's call shape by its declared version. From myosotis
+  `0.4.0` a forget is sent as a confirmed, keyed request; from drosera `0.4.0` a skill is
+  built with procedure, guardrails, and verification. Earlier versions keep the earlier
+  shapes, so their results do not move. Two new behavior probes hold the `0.4.0` claims
+  from that version: `myosotis-forget-confirmed-and-keyed` and
+  `drosera-skill-record-and-lifecycle`. Older checkouts read `unknown` for both.
+
 - `0.2.0` — rule 6, the version gate, implemented as `since()` in `src/probes.mjs`. Eleven probes hold claims the members made after `0.1.0`, each from the version that made it, and the cross probe `vendor-list-agreement` holds drosera's vendor list against seed's forbidden segments. A grid over checkouts older than those versions reads `unknown` where it read `pass`: those claims were not probed before, and they are not probed now, but the report now says so.

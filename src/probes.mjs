@@ -50,6 +50,31 @@ function since(version, claim, check) {
   };
 }
 
+// True when the subject declares an x.y.z VERSION at or past `version`.
+function atLeast(namespace, version) {
+  const have = parseVersion(namespace?.VERSION);
+  return have !== null && !olderThan(have, parseVersion(version));
+}
+
+// The forget request a myosotis checkout accepts. From 0.4.0 a forget is confirmed
+// and keyed, and a bare id is refused; before it, the id alone was the request.
+function forgetRequest(namespace, id) {
+  return atLeast(namespace, '0.4.0') ? { id, confirmed: true, key: `trellis-${id}` } : id;
+}
+
+// The skill input a drosera checkout accepts. From 0.4.0 a skill also carries
+// procedure, guardrails, and verification; before it, name, summary, and
+// instructions were the whole shape.
+function skillInput(namespace, fields) {
+  if (!atLeast(namespace, '0.4.0')) return fields;
+  return {
+    ...fields,
+    procedure: ['Read the face.'],
+    guardrails: ['Call nothing the run did not admit.'],
+    verification: ['The recorded intent matches the face.'],
+  };
+}
+
 function rejects(fn) {
   try {
     fn();
@@ -349,14 +374,14 @@ export const myosotisProbes = Object.freeze([
       if (namespace.projectionIsValid(admitted.store, stamp) !== true) {
         return { ok: false, message: 'fresh projection stamp reported invalid' };
       }
-      const forgotten = namespace.forgetMemory(admitted.store, 'n-1');
+      const forgotten = namespace.forgetMemory(admitted.store, forgetRequest(namespace, 'n-1'));
       if (forgotten.status !== 'forgotten' || forgotten.store.epoch !== store.epoch + 1) {
         return { ok: false, message: 'forget did not remove and bump the epoch' };
       }
       if (namespace.projectionIsValid(forgotten.store, stamp) !== false) {
         return { ok: false, message: 'stale projection failed open: resurrection is structurally possible' };
       }
-      const miss = namespace.forgetMemory(forgotten.store, 'not-there');
+      const miss = namespace.forgetMemory(forgotten.store, forgetRequest(namespace, 'not-there'));
       if (miss.status !== 'unknown' || miss.store.epoch !== forgotten.store.epoch) {
         return { ok: false, message: 'a forget miss was not declared unknown without state change' };
       }
@@ -418,7 +443,7 @@ export const myosotisProbes = Object.freeze([
         }));
       }
       const before = namespace.buildProjection(store);
-      const { store: after } = namespace.forgetMemory(store, 'secret-1');
+      const { store: after } = namespace.forgetMemory(store, forgetRequest(namespace, 'secret-1'));
       const read = namespace.readProjection(after, before);
       if (read.status !== 'refused' || read.records !== null) {
         return { ok: false, message: `a stale projection was served: ${JSON.stringify(read)}` };
@@ -451,6 +476,50 @@ export const myosotisProbes = Object.freeze([
         }
       }
       return { ok: true, message: 'consent follows the sequence; ties and unsequenced records go to the revocation' };
+    }),
+  }),
+  probe({
+    id: 'myosotis-forget-confirmed-and-keyed',
+    point: 'behavior',
+    applies: 'myosotis',
+    summary: 'A forget without confirmation changes nothing, a repeated key does not bump the epoch again, a forget tombstones the supersede chain under the named id with no text, and a projection holds ids and digests, not text.',
+    check: since('0.4.0', 'confirmed, keyed forget with tombstones', ({ namespace }) => {
+      const none = namespace.consentState({});
+      let store = namespace.openStore();
+      const admit = (input) => {
+        const result = namespace.admitMemory(store, none, { kind: 'organizational', scope: 'team', ...input });
+        if (result.admitted !== true) throw new Error(`admission refused: ${result.reason}`);
+        store = result.store;
+      };
+      admit({ id: 'v1', text: 'The window is Tuesday.' });
+      admit({ id: 'v2', text: 'The window is Thursday.', supersedes: 'v1' });
+      admit({ id: 'other', text: 'Unrelated note.' });
+
+      const projection = namespace.buildProjection(store);
+      if (JSON.stringify(projection).includes('Thursday')) {
+        return { ok: false, message: 'a projection carried a second copy of the text' };
+      }
+      for (const request of ['v2', { id: 'v2', key: 'k-1' }]) {
+        const refused = namespace.forgetMemory(store, request);
+        if (refused.status !== 'refused' || refused.store !== store) {
+          return { ok: false, message: `an unconfirmed forget changed the store: ${JSON.stringify(refused.status)}` };
+        }
+      }
+      const first = namespace.forgetMemory(store, { id: 'v2', confirmed: true, key: 'k-1' });
+      if (first.status !== 'forgotten' || first.store.epoch !== store.epoch + 1) {
+        return { ok: false, message: 'a confirmed forget did not remove and bump the epoch once' };
+      }
+      const tombstones = first.store.tombstones ?? [];
+      const named = ['v1', 'v2'].every((id) => tombstones.some((t) => t.id === id && t.namedId === 'v2'));
+      if (!named) return { ok: false, message: 'the superseded record was not tombstoned under the named id' };
+      if (JSON.stringify(tombstones).includes('Tuesday')) {
+        return { ok: false, message: 'a tombstone kept the forgotten text' };
+      }
+      const again = namespace.forgetMemory(first.store, { id: 'v2', confirmed: true, key: 'k-1' });
+      if (again.store.epoch !== first.store.epoch) {
+        return { ok: false, message: 'repeating the same forget key bumped the epoch again' };
+      }
+      return { ok: true, message: 'forget is confirmed and keyed; chains tombstone under the named id; projections carry no text' };
     }),
   }),
 ]);
@@ -624,7 +693,7 @@ export const droseraProbes = Object.freeze([
         namespace.toolFace({ id: 'memory.note.list', effect: 'read', connector: 'b', summary: 'List notes.' }),
       ]);
       const skills = namespace.skillPack([
-        namespace.skill({ name: 'pre-flight', summary: 's', instructions: 'i' }),
+        namespace.skill(skillInput(namespace, { name: 'pre-flight', summary: 's', instructions: 'i' })),
       ]);
       const recipe = namespace.recipe({
         id: 'retire', objective: 'o',
@@ -658,7 +727,7 @@ export const droseraProbes = Object.freeze([
     check: since('0.2.0', 'pack revalidation', ({ namespace }) => {
       const frozen = [
         ['tool pack', () => namespace.toolPack([Object.freeze({ id: 'Memory.Note.Read', effect: 'read', connector: 'c', summary: 's' })])],
-        ['skill pack', () => namespace.skillPack([Object.freeze({ name: 'PreFlight', summary: 's', instructions: 'i' })])],
+        ['skill pack', () => namespace.skillPack([Object.freeze(skillInput(namespace, { name: 'PreFlight', summary: 's', instructions: 'i' }))])],
         ['hook pack', () => namespace.hookPack([Object.freeze({ id: 'args-ok', event: 'before-tool', summary: 's', check: 'prose' })])],
         ['cookbook', () => namespace.cookbook([Object.freeze({ id: 'empty', objective: 'o', steps: Object.freeze([]) })])],
       ];
@@ -674,7 +743,7 @@ export const droseraProbes = Object.freeze([
     applies: 'drosera',
     summary: 'A skill name with a vendor word is refused, whole words only, while protocol words stay allowed.',
     check: since('0.3.0', 'vendor words in skill names', ({ namespace }) => {
-      const make = (name) => () => namespace.skill({ name, summary: 's', instructions: 'i' });
+      const make = (name) => () => namespace.skill(skillInput(namespace, { name, summary: 's', instructions: 'i' }));
       for (const name of ['claude-review', 'review-with-gemini']) {
         if (!rejects(make(name))) return { ok: false, message: `skill "${name}" was accepted` };
       }
@@ -682,6 +751,38 @@ export const droseraProbes = Object.freeze([
         if (rejects(make(name))) return { ok: false, message: `skill "${name}" was refused; the contract allows it` };
       }
       return { ok: true, message: 'vendor words refused; substrings and protocol words allowed' };
+    }),
+  }),
+  probe({
+    id: 'drosera-skill-record-and-lifecycle',
+    point: 'behavior',
+    applies: 'drosera',
+    summary: 'A skill needs procedure, guardrails, and verification beside its summary, and its lifecycle is draft, promoted, or deprecated, with deprecated terminal.',
+    check: since('0.4.0', 'skill records and lifecycle', ({ namespace }) => {
+      const full = skillInput(namespace, { name: 'pre-flight', summary: 's' });
+      for (const field of ['procedure', 'guardrails', 'verification']) {
+        const { [field]: _dropped, ...missing } = full;
+        if (!rejects(() => namespace.skill(missing))) {
+          return { ok: false, message: `a skill without ${field} was accepted` };
+        }
+      }
+      const states = [...(namespace.LIFECYCLE_STATES ?? [])];
+      if (JSON.stringify(states) !== JSON.stringify(['draft', 'promoted', 'deprecated'])) {
+        return { ok: false, message: `lifecycle states drifted: ${states.join(', ')}` };
+      }
+      const draft = namespace.skill(full);
+      if (draft.lifecycle !== 'draft') return { ok: false, message: 'a new skill did not start as a draft' };
+      const promoted = namespace.transitionSkill(draft, 'promoted', { approver: 'reviewer' });
+      const deprecated = namespace.transitionSkill(promoted, 'deprecated', { reason: 'replaced' });
+      if (promoted.lifecycle !== 'promoted' || deprecated.lifecycle !== 'deprecated' || draft.lifecycle !== 'draft') {
+        return { ok: false, message: 'a transition did not land, or changed the record it was given' };
+      }
+      for (const to of ['draft', 'promoted', 'deprecated']) {
+        if (!rejects(() => namespace.transitionSkill(deprecated, to, { approver: 'reviewer', reason: 'again' }))) {
+          return { ok: false, message: `a deprecated skill moved to ${to}` };
+        }
+      }
+      return { ok: true, message: 'skills carry procedure, guardrails, verification; deprecated is terminal' };
     }),
   }),
 ]);
@@ -774,7 +875,7 @@ export const crossProbes = Object.freeze([
       const corpus = [...new Set([...documented, ...drosera.namespace.VENDOR_NAMES, ...candidates, ...protocols])];
       for (const word of corpus) {
         const seedForbids = rejects(() => seed.namespace.parseToolId(`docs.${word}.read`));
-        const droseraRefuses = rejects(() => drosera.namespace.skill({ name: `${word}-notes`, summary: 's', instructions: 'i' }));
+        const droseraRefuses = rejects(() => drosera.namespace.skill(skillInput(drosera.namespace, { name: `${word}-notes`, summary: 's', instructions: 'i' })));
         if (droseraRefuses && !seedForbids) {
           return { ok: false, message: `drosera refuses "${word}" in a skill name, but seed admits it as a tool-id segment` };
         }

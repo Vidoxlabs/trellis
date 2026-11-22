@@ -195,8 +195,10 @@ test('the default myosotis probes pass against a faithful 0.1.0 fixture, and lat
   const results = myosotisProbes.map((p) => runProbe(p, { myosotis: subject }));
   assert.deepEqual(results.filter((r) => r.status === 'fail'), []);
   const unknown = results.filter((r) => r.status === 'unknown');
-  assert.deepEqual(unknown.map((r) => r.id), ['myosotis-stale-projection-refused', 'myosotis-reconsent-by-sequence']);
-  for (const result of unknown) assert.match(result.detail, /arrived in 0\.[23]\.0; this checkout declares 0\.1\.0/);
+  assert.deepEqual(unknown.map((r) => r.id), [
+    'myosotis-stale-projection-refused', 'myosotis-reconsent-by-sequence', 'myosotis-forget-confirmed-and-keyed',
+  ]);
+  for (const result of unknown) assert.match(result.detail, /arrived in 0\.[234]\.0; this checkout declares 0\.1\.0/);
 });
 
 test('a broken forget fails the structural probe and nothing launders it', () => {
@@ -390,6 +392,144 @@ test('the skill-name probe fails a drosera that refuses substrings', () => {
   const result = runProbe(p, { drosera: { namespace: substring, pkg: null } });
   assert.equal(result.status, 'fail');
   assert.match(result.detail, /claudette-notes/);
+});
+
+// Myosotis 0.4.0 and drosera 0.4.0 changed their call shapes on purpose: a forget is
+// confirmed and keyed, and a skill carries procedure, guardrails, and verification.
+// The probes speak each version's shape and hold the new claims from 0.4.0.
+
+const sha = (text) => `d${text.length.toString(16).padStart(63, '0')}`;
+
+function memoryFixture040({ bareIdForgets = false, keyBumpsAgain = false, projectsText = false } = {}) {
+  const kinds = new Set(['organizational', 'personal-consented', 'active-thread', 'unconfirmed']);
+  const open = () => ({ epoch: 0, records: [], tombstones: [], receipts: [] });
+  const active = (store) => store.records.filter((r) => r.state === 'active');
+  const projection = (store) => ({
+    stamp: store.epoch,
+    records: active(store).map((r) => (projectsText ? { ...r } : { id: r.id, digest: r.digest })),
+  });
+  return {
+    VERSION: '0.4.0',
+    MEMORY_KINDS: kinds,
+    memoryRecord: (input) => {
+      if (!input || !input.id || !input.text || !input.scope || !kinds.has(input.kind)) throw new Error('invalid memory record');
+      return { ...input };
+    },
+    requiresConsent: (kind) => kind === 'personal-consented',
+    consentState: ({ grants = [] } = {}) => ({ hasConsentFor: (scope) => grants.some((g) => g.scope === scope) }),
+    openStore: open,
+    admitMemory: (store, state, input) => {
+      if (!kinds.has(input.kind)) return { store, admitted: false, reason: 'invalid memory record' };
+      if (input.kind === 'personal-consented' && !state.hasConsentFor(input.scope)) return { store, admitted: false, reason: 'consent required' };
+      const records = store.records.map((r) => (r.id === input.supersedes ? { ...r, state: 'superseded' } : r));
+      const record = { ...input, supersedes: input.supersedes ?? null, digest: sha(input.text), state: 'active' };
+      return { store: { ...store, records: [...records, record] }, admitted: true, record };
+    },
+    forgetMemory: (store, request) => {
+      const bare = typeof request === 'string';
+      if (bare && !bareIdForgets) return { store, status: 'refused', reason: 'confirmation-required', forgotten: null };
+      const { id, confirmed, key } = bare ? { id: request, confirmed: true, key: request } : request;
+      if (confirmed !== true) return { store, status: 'refused', reason: 'confirmation-required', forgotten: null };
+      if (store.receipts.some((r) => r.key === key)) {
+        // The defect under test: a replay that moves the epoch a second time.
+        if (keyBumpsAgain) return { store: { ...store, epoch: store.epoch + 1 }, status: 'replayed', forgotten: null };
+        return { store, status: 'replayed', forgotten: null };
+      }
+      let hit = store.records.find((r) => r.id === id);
+      if (!hit) return { store, status: 'unknown', forgotten: null };
+      const chain = [];
+      for (let at = hit; at; at = store.records.find((r) => r.id === at.supersedes)) chain.push(at);
+      const epoch = store.epoch + 1;
+      return {
+        store: {
+          epoch,
+          records: store.records.filter((r) => !chain.includes(r)),
+          tombstones: [...store.tombstones, ...chain.map((r) => ({ id: r.id, namedId: id, digest: r.digest, epoch }))],
+          receipts: [...store.receipts, { key, id, epoch }],
+        },
+        status: 'forgotten',
+        forgotten: hit,
+      };
+    },
+    recallAll: active,
+    projectionStamp: (store) => store.epoch,
+    projectionIsValid: (store, stamp) => stamp === store.epoch,
+    buildProjection: projection,
+    readProjection: (store, given) => (given.stamp === store.epoch
+      ? { status: 'current', records: given.records }
+      : { status: 'refused', reason: 'stale', records: null }),
+    recallCurrent: (store, given) => (given.stamp === store.epoch
+      ? { projection: given, records: active(store), rebuilt: false }
+      : { projection: projection(store), records: active(store), rebuilt: true }),
+  };
+}
+
+test('the myosotis probes speak the 0.4.0 forget shape and pass a faithful 0.4.0 fixture', () => {
+  const subject = { namespace: memoryFixture040(), pkg: null };
+  const results = myosotisProbes
+    .filter((p) => p.id !== 'myosotis-reconsent-by-sequence')            // consent ordering is not modeled here
+    .map((p) => runProbe(p, { myosotis: subject }));
+  assert.deepEqual(results.filter((r) => r.status !== 'pass').map((r) => [r.id, r.detail]), []);
+});
+
+test('the 0.4.0 forget probe fails a fixture that forgets a bare id, re-bumps a key, or projects text', () => {
+  const p = byId(myosotisProbes, 'myosotis-forget-confirmed-and-keyed');
+  const bare = runProbe(p, { myosotis: { namespace: memoryFixture040({ bareIdForgets: true }), pkg: null } });
+  assert.equal(bare.status, 'fail');
+  assert.match(bare.detail, /unconfirmed forget changed the store/);
+  const rebump = runProbe(p, { myosotis: { namespace: memoryFixture040({ keyBumpsAgain: true }), pkg: null } });
+  assert.equal(rebump.status, 'fail');
+  assert.match(rebump.detail, /bumped the epoch again/);
+  const copies = runProbe(p, { myosotis: { namespace: memoryFixture040({ projectsText: true }), pkg: null } });
+  assert.equal(copies.status, 'fail');
+  assert.match(copies.detail, /second copy of the text/);
+});
+
+const LISTS = ['procedure', 'guardrails', 'verification'];
+
+function skillSubject040({ deprecatedMoves = false } = {}) {
+  const vendors = SEED_FORBIDDEN.slice(0, 8);
+  const TRANSITIONS = { draft: ['promoted', 'deprecated'], promoted: ['deprecated'], deprecated: deprecatedMoves ? ['draft'] : [] };
+  const skill = (input) => {
+    if (!/^[a-z][a-z0-9-]*$/.test(input.name ?? '')) throw new Error('name');
+    if (input.name.split('-').some((word) => vendors.includes(word))) throw new Error('vendor or product name');
+    for (const field of LISTS) if (!Array.isArray(input[field]) || input[field].length === 0) throw new Error(field);
+    return Object.freeze({ ...input, lifecycle: input.lifecycle ?? 'draft' });
+  };
+  return {
+    namespace: {
+      VERSION: '0.4.0',
+      VENDOR_NAMES: new Set(vendors),
+      LIFECYCLE_STATES: ['draft', 'promoted', 'deprecated'],
+      skill,
+      skillPack: (items) => items.map(skill),
+      transitionSkill: (record, to) => {
+        if (!TRANSITIONS[record.lifecycle].includes(to)) throw new Error('cannot move');
+        return skill({ ...record, lifecycle: to });
+      },
+    },
+    pkg: null,
+  };
+}
+
+test('the drosera probes and the vendor agreement speak the 0.4.0 skill shape', () => {
+  const drosera = skillSubject040();
+  for (const id of ['drosera-skill-names-refuse-vendors', 'drosera-skill-record-and-lifecycle']) {
+    const result = runProbe(byId(droseraProbes, id), { drosera });
+    assert.equal(result.status, 'pass', `${id}: ${result.detail}`);
+  }
+  const agreement = runProbe(byId(crossProbes, 'vendor-list-agreement'), { seed: grammarSubject(), drosera });
+  assert.equal(agreement.status, 'pass', agreement.detail);
+});
+
+test('the lifecycle probe fails a drosera whose deprecated skills move, and is unknown before 0.4.0', () => {
+  const p = byId(droseraProbes, 'drosera-skill-record-and-lifecycle');
+  const moving = runProbe(p, { drosera: skillSubject040({ deprecatedMoves: true }) });
+  assert.equal(moving.status, 'fail');
+  assert.match(moving.detail, /deprecated skill moved to draft/);
+  const older = runProbe(p, { drosera: skillSubject() });
+  assert.equal(older.status, 'unknown');
+  assert.match(older.detail, /arrived in 0\.4\.0; this checkout declares 0\.3\.0/);
 });
 
 test('the exported version matches the package', () => {
