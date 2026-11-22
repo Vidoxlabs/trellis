@@ -10,7 +10,7 @@ A trellis is the lattice a garden grows against. Climbing plants grip a lattice 
 
 ## Status
 
-Version 0.1.0. Contracts and modules only; nothing shipped runtime-wise beyond the engine and the bundle runner. The probe, grid, and verdict engine is `implemented` as a tested reference library. Family health statements live in `docs/evidence/` as dated observed runs. The engine covers the family's module repositories; the harness and the design canon keep their own checks in their own homes.
+Version 0.2.0. Contracts and modules only; nothing shipped runtime-wise beyond the engine and the bundle runner. The probe, grid, and verdict engine is `implemented` as a tested reference library. Family health statements live in `docs/evidence/` as dated observed runs. The engine covers the family's module repositories; the harness and the design canon keep their own checks in their own homes.
 
 ## Install
 
@@ -27,7 +27,7 @@ Requires Node >= 22.13. Zero runtime dependencies.
 | `point.mjs` | The four test points and the probe record: deterministic checks, fail closed, dedicated to one point. | `implemented` |
 | `score.mjs` | Verdict math: pass, fail, unknown; fail outranks unknown, unknown outranks pass, and nothing is ever silently passed. | `implemented` |
 | `grid.mjs` | The multi-point grid: run probes against injected subjects and roll the results up per subject and per point. | `implemented` |
-| `probes.mjs` | The default probe lists for each family member and the cross-family consistency probes. | `implemented` |
+| `probes.mjs` | The default probe lists for each family member and the cross-family consistency probes. A claim a member made after its first release is probed from the version that made it; an older checkout reads unknown. | `implemented` |
 
 The bundle runner, `scripts/family.mjs` (`npm run family`), wires the grid to the canonical family workspace: it loads each sibling's modules, runs the default probes, runs each sibling's own test suite for the operational point, and prints the dated report the evidence docs record.
 

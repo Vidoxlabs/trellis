@@ -17,7 +17,12 @@ import {
   defaultProbes,
   myosotisProbes,
   seedProbes,
+  aestivationProbes,
+  droseraProbes,
+  crossProbes,
+  VERSION,
 } from '../src/index.mjs';
+import { readFileSync } from 'node:fs';
 
 const pass = () => ({ ok: true });
 const fail = () => ({ ok: false, message: 'declared fail' });
@@ -185,11 +190,13 @@ function memoryFixture({ brokenForget = false } = {}) {
   };
 }
 
-test('the default myosotis probes pass against a faithful fixture', () => {
+test('the default myosotis probes pass against a faithful 0.1.0 fixture, and later claims stay unknown', () => {
   const subject = { namespace: memoryFixture(), pkg: null };
   const results = myosotisProbes.map((p) => runProbe(p, { myosotis: subject }));
-  const failed = results.filter((r) => r.status !== 'pass');
-  assert.deepEqual(failed, []);
+  assert.deepEqual(results.filter((r) => r.status === 'fail'), []);
+  const unknown = results.filter((r) => r.status === 'unknown');
+  assert.deepEqual(unknown.map((r) => r.id), ['myosotis-stale-projection-refused', 'myosotis-reconsent-by-sequence']);
+  for (const result of unknown) assert.match(result.detail, /arrived in 0\.[23]\.0; this checkout declares 0\.1\.0/);
 });
 
 test('a broken forget fails the structural probe and nothing launders it', () => {
@@ -247,4 +254,145 @@ test('an empty grid is a pass, and the grid freezes its results', () => {
   assert.equal(grid.verdict, 'pass');
   assert.equal(Object.isFrozen(grid), true);
   assert.throws(() => { grid.results.push('x'); }, TypeError);
+});
+
+// Claims that arrived after 0.1.0. Each probe holds its claim from the
+// version that made it, and fails a subject at that version that breaks it.
+
+const byId = (list, id) => list.find((p) => p.id === id);
+
+test('a claim is probed only from the version that made it', () => {
+  const p = byId(seedProbes, 'seed-admission-holds-at-intent');
+  const older = runProbe(p, { seed: { namespace: { VERSION: '0.1.9' }, pkg: null } });
+  assert.equal(older.status, 'unknown');
+  assert.match(older.detail, /arrived in 0\.2\.0; this checkout declares 0\.1\.9/);
+  const undeclared = runProbe(p, { seed: { namespace: {}, pkg: null } });
+  assert.equal(undeclared.status, 'unknown');
+  assert.match(undeclared.detail, /declares no x\.y\.z VERSION/);
+  // At the version, the claim is held: a namespace that cannot honor it fails, it is not excused.
+  const atVersion = runProbe(p, { seed: { namespace: { VERSION: '0.10.0' }, pkg: null } });
+  assert.equal(atVersion.status, 'fail');
+});
+
+function runModelFixture({ admitsAnything = false } = {}) {
+  return {
+    VERSION: '0.2.0',
+    createObjective: (input) => ({ ...input, status: 'draft' }),
+    transition: (objective, to) => ({ ...objective, status: to }),
+    createAttemptRecord: ({ objective }) => ({ objectiveId: objective.id, allowedTools: [...objective.allowedTools], recordedIntents: [] }),
+    recordIntent: (attempt, intent) => {
+      if (!admitsAnything && !(Array.isArray(attempt.allowedTools) && attempt.allowedTools.includes(intent.toolId))) {
+        throw new Error('not admitted');
+      }
+      return { ...attempt, recordedIntents: [...attempt.recordedIntents, intent] };
+    },
+  };
+}
+
+test('the admission probe passes a faithful run model and fails one that admits anything', () => {
+  const p = byId(seedProbes, 'seed-admission-holds-at-intent');
+  assert.equal(runProbe(p, { seed: { namespace: runModelFixture(), pkg: null } }).status, 'pass');
+  const broken = runProbe(p, { seed: { namespace: runModelFixture({ admitsAnything: true }), pkg: null } });
+  assert.equal(broken.status, 'fail');
+  assert.match(broken.detail, /off the admission list/);
+});
+
+function gateFixture({ ignoresDigest = false } = {}) {
+  return {
+    VERSION: '0.3.0',
+    planProposal: ({ id, objective, steps }) => ({ id, objective, steps, digest: JSON.stringify(steps).length.toString(16).padStart(64, '0') }),
+    validatePlan: () => ({ ok: true, errors: [] }),
+    verdictRecord: (input) => ({ planDigest: null, reasons: [], ...input }),
+    assemblyGate: ({ verdicts, planDigest }) => {
+      const latest = verdicts.at(-1);
+      if (!ignoresDigest && planDigest !== undefined && latest.planDigest !== planDigest) {
+        return { permitted: false, held: 'review-stale', verdict: latest };
+      }
+      return { permitted: true, held: null, verdict: latest };
+    },
+  };
+}
+
+test('the digest probe fails a gate that lets an old approval open a changed plan', () => {
+  const p = byId(aestivationProbes, 'aestivation-review-binds-to-digest');
+  assert.equal(runProbe(p, { aestivation: { namespace: gateFixture(), pkg: null } }).status, 'pass');
+  const broken = runProbe(p, { aestivation: { namespace: gateFixture({ ignoresDigest: true }), pkg: null } });
+  assert.equal(broken.status, 'fail');
+  assert.match(broken.detail, /earlier version opened the gate/);
+});
+
+const SEED_FORBIDDEN = ['openai', 'anthropic', 'claude', 'chatgpt', 'gemini', 'grok', 'copilot', 'cursor', 'http', 'https', 'websocket', 'grpc', 'sdk'];
+
+function grammarSubject(forbidden = SEED_FORBIDDEN) {
+  return {
+    namespace: {
+      VERSION: '0.2.0',
+      parseToolId: (id) => {
+        if (id.split('.').some((segment) => forbidden.includes(segment))) throw new Error('vendor or protocol name');
+        return {};
+      },
+    },
+    pkg: null,
+  };
+}
+
+function skillSubject({ vendors = SEED_FORBIDDEN.slice(0, 8), version = '0.3.0' } = {}) {
+  return {
+    namespace: {
+      VERSION: version,
+      VENDOR_NAMES: new Set(vendors),
+      skill: ({ name }) => {
+        if (name.split('-').some((word) => vendors.includes(word))) throw new Error('vendor or product name');
+        return { name };
+      },
+    },
+    pkg: null,
+  };
+}
+
+test('the vendor lists agree when drosera holds exactly the vendor half of seed', () => {
+  const p = byId(crossProbes, 'vendor-list-agreement');
+  const result = runProbe(p, { seed: grammarSubject(), drosera: skillSubject() });
+  assert.equal(result.status, 'pass');
+});
+
+test('the vendor probe names a vendor seed forbids that drosera lacks', () => {
+  const p = byId(crossProbes, 'vendor-list-agreement');
+  const result = runProbe(p, { seed: grammarSubject(), drosera: skillSubject({ vendors: SEED_FORBIDDEN.slice(0, 7) }) });
+  assert.equal(result.status, 'fail');
+  assert.match(result.detail, /seed forbids "cursor".*lacks it/);
+});
+
+test('the vendor probe names a word drosera refuses that seed admits, and a refused protocol word', () => {
+  const p = byId(crossProbes, 'vendor-list-agreement');
+  const extra = runProbe(p, { seed: grammarSubject(), drosera: skillSubject({ vendors: [...SEED_FORBIDDEN.slice(0, 8), 'mistral'] }) });
+  assert.equal(extra.status, 'fail');
+  assert.match(extra.detail, /refuses "mistral".*seed admits it/);
+  const protocol = runProbe(p, { seed: grammarSubject(), drosera: skillSubject({ vendors: [...SEED_FORBIDDEN.slice(0, 8), 'http'] }) });
+  assert.equal(protocol.status, 'fail');
+  assert.match(protocol.detail, /protocol word "http"/);
+});
+
+test('the vendor probe is unknown without both checkouts or before drosera 0.3.0', () => {
+  const p = byId(crossProbes, 'vendor-list-agreement');
+  assert.equal(runProbe(p, { seed: grammarSubject(), drosera: null }).status, 'unknown');
+  const older = runProbe(p, { seed: grammarSubject(), drosera: skillSubject({ version: '0.2.0' }) });
+  assert.equal(older.status, 'unknown');
+  assert.match(older.detail, /arrived in drosera 0\.3\.0/);
+});
+
+test('the skill-name probe fails a drosera that refuses substrings', () => {
+  const p = byId(droseraProbes, 'drosera-skill-names-refuse-vendors');
+  const substring = {
+    VERSION: '0.3.0',
+    skill: ({ name }) => { if (/claude|gemini/.test(name)) throw new Error('vendor'); return { name }; },
+  };
+  const result = runProbe(p, { drosera: { namespace: substring, pkg: null } });
+  assert.equal(result.status, 'fail');
+  assert.match(result.detail, /claudette-notes/);
+});
+
+test('the exported version matches the package', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(VERSION, pkg.version);
 });

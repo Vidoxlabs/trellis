@@ -20,6 +20,45 @@ function expectThrow(fn, label) {
   }
 }
 
+function parseVersion(value) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(typeof value === 'string' ? value : '');
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function olderThan(have, need) {
+  for (let index = 0; index < 3; index += 1) {
+    if (have[index] !== need[index]) return have[index] < need[index];
+  }
+  return false;
+}
+
+// A claim arrives with a version. Probing it against a checkout that predates
+// the claim would probe something the subject never said (probes.md, "not a
+// superset"), so that case is declared unknown with both versions named. A
+// subject at or past the version is held to the claim and can fail.
+function since(version, claim, check) {
+  const need = parseVersion(version);
+  return (subject, subjects) => {
+    const have = parseVersion(subject?.namespace?.VERSION);
+    if (have === null) {
+      return { unknown: true, message: `${claim} arrived in ${version}; the subject declares no x.y.z VERSION` };
+    }
+    if (olderThan(have, need)) {
+      return { unknown: true, message: `${claim} arrived in ${version}; this checkout declares ${subject.namespace.VERSION}` };
+    }
+    return check(subject, subjects);
+  };
+}
+
+function rejects(fn) {
+  try {
+    fn();
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 export const FAMILY_MEMBERS = Object.freeze([
   'seed', 'capillary', 'myosotis', 'aestivation', 'drosera',
 ]);
@@ -107,6 +146,59 @@ export const seedProbes = Object.freeze([
       return { ok: true, message: 'memory and context domains are reserved' };
     },
   }),
+  probe({
+    id: 'seed-admission-holds-at-intent',
+    point: 'behavior',
+    applies: 'seed',
+    summary: 'An attempt copies its objective\'s admission list, an intent naming a tool off that list is refused, and an attempt carrying no list admits nothing.',
+    check: since('0.2.0', 'admission at intent', ({ namespace }) => {
+      let objective = namespace.createObjective({
+        id: 'o-1', intent: 'Read one note.', acceptance: 'note-read', allowedTools: ['memory.note.read'],
+      });
+      objective = namespace.transition(namespace.transition(objective, 'ready'), 'running');
+      const attempt = namespace.createAttemptRecord({ objective });
+      if (JSON.stringify(attempt.allowedTools) !== JSON.stringify(['memory.note.read'])) {
+        return { ok: false, message: `attempt did not copy the admission list: ${JSON.stringify(attempt.allowedTools)}` };
+      }
+      const intent = { argumentsDigest: 'a'.repeat(64), scope: 'one note' };
+      const admitted = namespace.recordIntent(attempt, { toolId: 'memory.note.read', ...intent });
+      if (admitted.recordedIntents.length !== 1) {
+        return { ok: false, message: 'an admitted intent was not recorded' };
+      }
+      const offList = expectThrow(() => namespace.recordIntent(attempt, { toolId: 'memory.note.delete', ...intent }), 'intent off the admission list');
+      if (offList.ok === false) return offList;
+      const { allowedTools: _dropped, ...bare } = attempt;
+      const noList = expectThrow(() => namespace.recordIntent(bare, { toolId: 'memory.note.read', ...intent }), 'intent on an attempt with no admission list');
+      if (noList.ok === false) return noList;
+      return { ok: true, message: 'admission is enforced when the intent is recorded' };
+    }),
+  }),
+  probe({
+    id: 'seed-rollback-posture-declared',
+    point: 'behavior',
+    applies: 'seed',
+    summary: 'An entry with no rollback declares the unsupported posture, and a registry whose compensating tool is not registered names that defect.',
+    check: since('0.2.0', 'rollback postures', ({ namespace }) => {
+      const entry = (toolId, rollback) => ({
+        toolId, connector: 'memory-binding', effect: 'write', realm: 'conversation',
+        thirdPartyEgress: false, ownerGate: false, inputSchema: { type: 'object' },
+        ...(rollback ? { rollback } : {}),
+      });
+      if (namespace.rollbackPosture(entry('memory.note.create')) !== 'unsupported') {
+        return { ok: false, message: 'an entry that declares no rollback did not read as unsupported' };
+      }
+      const create = entry('memory.note.create', { posture: 'compensating_action', compensatingTool: 'memory.note.delete' });
+      const dangling = namespace.checkRegistry([create]);
+      if (dangling.ok !== false || !dangling.errors.some((error) => /memory\.note\.delete/.test(error))) {
+        return { ok: false, message: `an unregistered compensating tool was not named: ${JSON.stringify(dangling)}` };
+      }
+      const whole = namespace.checkRegistry([create, entry('memory.note.delete')]);
+      if (whole.ok !== true) {
+        return { ok: false, message: `a registry holding its compensating tool failed: ${whole.errors.join('; ')}` };
+      }
+      return { ok: true, message: 'rollback posture defaults to unsupported; compensating tools must be registered' };
+    }),
+  }),
 ]);
 
 export const capillaryProbes = Object.freeze([
@@ -191,6 +283,38 @@ export const capillaryProbes = Object.freeze([
       }
       return { ok: true, message: 'ledger audit catches what a writer would hide' };
     },
+  }),
+  probe({
+    id: 'capillary-unknown-sources-declared',
+    point: 'behavior',
+    applies: 'capillary',
+    summary: 'A source that could not be read is recorded as unknown with a null digest, its excerpts never enter a packet even with a digest attached, and the packet lists it.',
+    check: since('0.2.0', 'unknown sources', ({ namespace }) => {
+      const unknown = namespace.recordUnknownSource({
+        id: 'src-9', title: 'Gone', origin: 'url', originRef: 'r', reason: 'read-failed',
+      });
+      if (unknown.status !== 'unknown' || unknown.digest !== null || namespace.isUnknownSource(unknown) !== true) {
+        return { ok: false, message: `unreadable source not recorded as unknown: ${JSON.stringify(unknown)}` };
+      }
+      const packet = namespace.buildContextPacket({
+        items: [
+          { id: 'kept', sourceId: 'src-1', sourceDigest: 'a'.repeat(64), text: 'known text' },
+          { id: 'filled-in', sourceId: 'src-9', sourceDigest: 'a'.repeat(64), text: 'from elsewhere' },
+        ],
+        unknownSources: [unknown],
+      });
+      if (JSON.stringify(packet.items.map((item) => item.id)) !== JSON.stringify(['kept'])) {
+        return { ok: false, message: `an unknown source's excerpt entered the packet: ${JSON.stringify(packet.items.map((item) => item.id))}` };
+      }
+      const omitted = packet.omitted.find((item) => item.id === 'filled-in');
+      if (omitted?.reason !== 'unknown-source') {
+        return { ok: false, message: `the excerpt was not omitted with its reason: ${JSON.stringify(packet.omitted)}` };
+      }
+      if (!Array.isArray(packet.unknown) || packet.unknown[0]?.sourceId !== 'src-9' || packet.unknown[0]?.reason !== 'read-failed') {
+        return { ok: false, message: `the packet did not list the unknown source: ${JSON.stringify(packet.unknown)}` };
+      }
+      return { ok: true, message: 'unknown sources are recorded, kept out, and listed' };
+    }),
   }),
 ]);
 
@@ -281,6 +405,54 @@ export const myosotisProbes = Object.freeze([
       );
     },
   }),
+  probe({
+    id: 'myosotis-stale-projection-refused',
+    point: 'behavior',
+    applies: 'myosotis',
+    summary: 'A projection built before a forget is refused and serves no records, and current recall rebuilds without the forgotten record.',
+    check: since('0.2.0', 'refusing projections', ({ namespace }) => {
+      let store = namespace.openStore();
+      for (const id of ['secret-1', 'o-2']) {
+        ({ store } = namespace.admitMemory(store, namespace.consentState({}), {
+          id, kind: 'organizational', scope: 'team', text: `note ${id}`,
+        }));
+      }
+      const before = namespace.buildProjection(store);
+      const { store: after } = namespace.forgetMemory(store, 'secret-1');
+      const read = namespace.readProjection(after, before);
+      if (read.status !== 'refused' || read.records !== null) {
+        return { ok: false, message: `a stale projection was served: ${JSON.stringify(read)}` };
+      }
+      const current = namespace.recallCurrent(after, before);
+      if (current.rebuilt !== true || current.records.some((record) => record.id === 'secret-1')) {
+        return { ok: false, message: 'current recall returned the forgotten record' };
+      }
+      return { ok: true, message: 'stale projections are refused; recall rebuilds without the forgotten record' };
+    }),
+  }),
+  probe({
+    id: 'myosotis-reconsent-by-sequence',
+    point: 'behavior',
+    applies: 'myosotis',
+    summary: 'A grant sequenced after a revocation is re-consent, a later revocation ends it, a tie goes to the revocation, and an unsequenced side lets the revocation win.',
+    check: since('0.3.0', 'sequenced re-consent', ({ namespace }) => {
+      const grant = (sequence) => namespace.consentGrant({ subject: 'ada', scope: 'ada-space', grantedBy: 'ada', sequence });
+      const revoke = (sequence) => namespace.revokeConsent({ subject: 'ada', scope: 'ada-space', sequence });
+      const live = (grants, revocations) => namespace.consentState({ grants, revocations }).hasConsentFor('ada-space');
+      const cases = [
+        ['grant after revocation', [grant(1), grant(3)], [revoke(2)], true],
+        ['revocation after re-consent', [grant(1), grant(3)], [revoke(2), revoke(4)], false],
+        ['tie', [grant(2)], [revoke(2)], false],
+        ['unsequenced revocation', [grant(9)], [revoke(undefined)], false],
+      ];
+      for (const [label, grants, revocations, expected] of cases) {
+        if (live(grants, revocations) !== expected) {
+          return { ok: false, message: `${label}: consent read ${!expected}, the contract says ${expected}` };
+        }
+      }
+      return { ok: true, message: 'consent follows the sequence; ties and unsequenced records go to the revocation' };
+    }),
+  }),
 ]);
 
 export const aestivationProbes = Object.freeze([
@@ -351,6 +523,55 @@ export const aestivationProbes = Object.freeze([
       }
       return { ok: true, message: 'revise carries reasons; the ledger keeps both; latest wins' };
     },
+  }),
+  probe({
+    id: 'aestivation-gate-trusts-sound-ledgers-only',
+    point: 'behavior',
+    applies: 'aestivation',
+    summary: 'A hand-built approval with no judge holds the gate as ledger-unsound and is never surfaced as the verdict.',
+    check: since('0.2.0', 'ledger soundness at the gate', ({ namespace }) => {
+      const gate = namespace.assemblyGate({
+        validation: { ok: true, errors: [] },
+        verdicts: [{ planId: 'p-1', decision: 'approve' }],
+        planId: 'p-1',
+      });
+      if (gate.permitted !== false || gate.held !== 'ledger-unsound' || gate.verdict !== null) {
+        return { ok: false, message: `a forged approval was trusted: ${JSON.stringify({ permitted: gate.permitted, held: gate.held })}` };
+      }
+      return { ok: true, message: 'a forged approval holds the gate as ledger-unsound' };
+    }),
+  }),
+  probe({
+    id: 'aestivation-review-binds-to-digest',
+    point: 'behavior',
+    applies: 'aestivation',
+    summary: 'Given the plan digest, an approval of that exact plan permits, and an approval of a changed plan holds as review-stale.',
+    check: since('0.3.0', 'digest-bound review', ({ namespace }) => {
+      const steps = [
+        { stage: 'work', title: 'Write the change' },
+        { stage: 'review', title: 'Review the change' },
+        { stage: 'assemble', title: 'Assemble the release' },
+      ];
+      const reviewed = namespace.planProposal({ id: 'p-1', objective: 'Ship it', steps });
+      const changed = namespace.planProposal({ id: 'p-1', objective: 'Ship it', steps: [steps[0], { stage: 'work', title: 'Slipped in' }, steps[1], steps[2]] });
+      if (reviewed.digest === changed.digest) {
+        return { ok: false, message: 'a step added after review left the digest unchanged' };
+      }
+      const approval = namespace.verdictRecord({ planId: 'p-1', planDigest: reviewed.digest, decision: 'approve', judge: 'reviewer' });
+      const exact = namespace.assemblyGate({
+        validation: namespace.validatePlan(reviewed.steps), verdicts: [approval], planId: 'p-1', planDigest: reviewed.digest,
+      });
+      if (exact.permitted !== true) {
+        return { ok: false, message: `an approval of the exact plan did not permit: ${exact.held}` };
+      }
+      const stale = namespace.assemblyGate({
+        validation: namespace.validatePlan(changed.steps), verdicts: [approval], planId: 'p-1', planDigest: changed.digest,
+      });
+      if (stale.permitted !== false || stale.held !== 'review-stale') {
+        return { ok: false, message: `an approval of an earlier version opened the gate: ${JSON.stringify({ permitted: stale.permitted, held: stale.held })}` };
+      }
+      return { ok: true, message: 'an approval opens the gate only for the version it read' };
+    }),
   }),
 ]);
 
@@ -429,6 +650,40 @@ export const droseraProbes = Object.freeze([
         'face with a non-closed effect'
       ),
   }),
+  probe({
+    id: 'drosera-packs-revalidate-frozen-entries',
+    point: 'behavior',
+    applies: 'drosera',
+    summary: 'A pack checks every entry it is given: a frozen object that is not a valid face, skill, hook, or recipe is refused.',
+    check: since('0.2.0', 'pack revalidation', ({ namespace }) => {
+      const frozen = [
+        ['tool pack', () => namespace.toolPack([Object.freeze({ id: 'Memory.Note.Read', effect: 'read', connector: 'c', summary: 's' })])],
+        ['skill pack', () => namespace.skillPack([Object.freeze({ name: 'PreFlight', summary: 's', instructions: 'i' })])],
+        ['hook pack', () => namespace.hookPack([Object.freeze({ id: 'args-ok', event: 'before-tool', summary: 's', check: 'prose' })])],
+        ['cookbook', () => namespace.cookbook([Object.freeze({ id: 'empty', objective: 'o', steps: Object.freeze([]) })])],
+      ];
+      for (const [label, build] of frozen) {
+        if (!rejects(build)) return { ok: false, message: `${label} accepted a frozen invalid entry` };
+      }
+      return { ok: true, message: 'every pack revalidates frozen entries' };
+    }),
+  }),
+  probe({
+    id: 'drosera-skill-names-refuse-vendors',
+    point: 'behavior',
+    applies: 'drosera',
+    summary: 'A skill name with a vendor word is refused, whole words only, while protocol words stay allowed.',
+    check: since('0.3.0', 'vendor words in skill names', ({ namespace }) => {
+      const make = (name) => () => namespace.skill({ name, summary: 's', instructions: 'i' });
+      for (const name of ['claude-review', 'review-with-gemini']) {
+        if (!rejects(make(name))) return { ok: false, message: `skill "${name}" was accepted` };
+      }
+      for (const name of ['claudette-notes', 'http-caching']) {
+        if (rejects(make(name))) return { ok: false, message: `skill "${name}" was refused; the contract allows it` };
+      }
+      return { ok: true, message: 'vendor words refused; substrings and protocol words allowed' };
+    }),
+  }),
 ]);
 
 // Cross-family probes: agreements between siblings, declared by applies '*'.
@@ -494,6 +749,43 @@ export const crossProbes = Object.freeze([
         return { ok: false, message: `no x.y.z VERSION declared: ${missing.join(', ')}` };
       }
       return { ok: true, message: 'every present subject declares its version' };
+    },
+  }),
+  probe({
+    id: 'vendor-list-agreement',
+    point: 'consistency',
+    applies: '*',
+    summary: 'Drosera\'s vendor list is the vendor half of seed\'s forbidden segments on the corpus: every word drosera refuses in a skill name, seed refuses as a tool-id segment, and the corpus words seed forbids that drosera allows are protocol words only.',
+    check: (_subjects, subjects) => {
+      const seed = subjects.seed;
+      const drosera = subjects.drosera;
+      if (!seed || !drosera) {
+        return { unknown: true, message: 'vendor agreement needs both the seed and drosera checkouts present' };
+      }
+      const version = parseVersion(drosera.namespace.VERSION);
+      if (version === null || olderThan(version, [0, 3, 0])) {
+        return { unknown: true, message: `the vendor list arrived in drosera 0.3.0; this checkout declares ${drosera.namespace.VERSION}` };
+      }
+      const protocols = new Set(['http', 'https', 'websocket', 'grpc', 'sdk']);
+      // The vendor words both contracts name, so a word one side drops is still tried,
+      // plus candidates neither lists, so a word one side adds alone is caught.
+      const documented = ['openai', 'anthropic', 'claude', 'chatgpt', 'gemini', 'grok', 'copilot', 'cursor'];
+      const candidates = ['mistral', 'llama', 'deepseek', 'qwen', 'cohere', 'perplexity'];
+      const corpus = [...new Set([...documented, ...drosera.namespace.VENDOR_NAMES, ...candidates, ...protocols])];
+      for (const word of corpus) {
+        const seedForbids = rejects(() => seed.namespace.parseToolId(`docs.${word}.read`));
+        const droseraRefuses = rejects(() => drosera.namespace.skill({ name: `${word}-notes`, summary: 's', instructions: 'i' }));
+        if (droseraRefuses && !seedForbids) {
+          return { ok: false, message: `drosera refuses "${word}" in a skill name, but seed admits it as a tool-id segment` };
+        }
+        if (seedForbids && !droseraRefuses && !protocols.has(word)) {
+          return { ok: false, message: `seed forbids "${word}" as a segment, but drosera's vendor list lacks it` };
+        }
+        if (protocols.has(word) && droseraRefuses) {
+          return { ok: false, message: `drosera refuses protocol word "${word}"; its contract allows protocol words` };
+        }
+      }
+      return { ok: true, message: `the two lists agree on a ${corpus.length}-word corpus` };
     },
   }),
 ]);
