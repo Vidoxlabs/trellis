@@ -725,6 +725,29 @@ const followUpProbes = [
     correctPlan: () => { throw Object.assign(new Error('scope refused'), { code: 'authority-required' }); },
     assertCurrentPlanResult: () => { throw Object.assign(new Error('retired'), { code: 'order-superseded' }); },
   }, /scope refusal changed the active lineage/],
+  ['seed', 'seed-failure-class-honest', '0.6.0', '0.5.0', seedFixture030(), /unknown failure class was reported as success/],
+  ['capillary', 'capillary-search-refuses-fused-score', '1.2.0', '1.1.0', {
+    recordSource: input => ({ ...input, status: 'recorded' }),
+    searchSources: async () => ({ ok: true, untrusted: true, hits: [], count: 0 }),
+  }, /fused score was accepted/],
+  ['capillary', 'capillary-thread-declares-cuts', '1.3.0', '1.2.0', {
+    readThread: () => ({ ok: true, untrusted: true, messages: [], count: 0, truncated: false, continuationAvailable: false }),
+  }, /absent conversation returned an empty thread/],
+  ['capillary', 'capillary-recent-uses-caller-recency', '1.3.0', '1.2.0', {
+    listRecent: async ({ conversations }) => ({
+      ok: true, untrusted: true, count: conversations.length, truncated: false, continuationAvailable: false,
+      conversations: conversations.map(({ id, title, recency }) => ({ conversationId: id, title, recency })),
+    }),
+  }, /did not order by the caller's recency/],
+  ['capillary', 'capillary-context-brief-invents-nothing', '1.3.0', '1.2.0', {
+    contextBrief: ({ query = null }) => ({
+      ok: true, untrusted: true, query,
+      brief: { latestOperatorGoal: { sourceId: 'invented' }, latestVerifiedOutcome: null, openFollowups: [] },
+    }),
+  }, /brief invented a goal/],
+  ['capillary', 'capillary-trace-keeps-missing-start', '1.3.0', '1.2.0', {
+    traceSource: ({ startId }) => ({ ok: true, untrusted: true, startId, parentIds: ['invented'], stop: 'root', at: 'invented' }),
+  }, /missing start was given a parent/],
   ['drosera', 'drosera-catalog-public-skills', '0.5.0', '0.4.0', {
     ...skillSubject040().namespace,
     skillCatalog: entries => ({ list: () => entries.map(entry => ({ ...entry, slug: entry.skill.name })) }),

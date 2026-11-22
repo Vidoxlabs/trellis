@@ -284,6 +284,37 @@ export const seedProbes = Object.freeze([
     }),
   }),
   probe({
+    id: 'seed-failure-class-honest',
+    point: 'behavior',
+    applies: 'seed',
+    summary: 'An unknown failure class is a failure, never a success. A known class stays on the failed step, and a dry run adds no class.',
+    check: since('0.6.0', 'step failure classes', async ({ namespace }) => {
+      const steps = [{ id: 'prepare' }, { id: 'apply' }];
+      const answer = (result) => async (step) => (step.id === 'apply' ? result : { ok: true });
+      const unknown = await namespace.resumeSteps({ steps, execute: answer({ ok: true, failureClass: 'unrecognized' }) });
+      const unknownStep = unknown.steps?.find((step) => step.id === 'apply');
+      if (unknown.status !== 'failed' || unknownStep?.outcome !== 'failed') {
+        return { ok: false, message: `an unknown failure class was reported as success: ${unknown.status}` };
+      }
+      if (Object.hasOwn(unknownStep, 'failureClass')) {
+        return { ok: false, message: 'an unknown failure class was carried on the step' };
+      }
+      const known = await namespace.resumeSteps({ steps, execute: answer({ ok: false, failureClass: 'policy-denied' }) });
+      if (known.steps?.find((step) => step.id === 'apply')?.failureClass !== 'policy-denied') {
+        return { ok: false, message: 'a known failure class was not kept on the failed step' };
+      }
+      let calls = 0;
+      const preview = await namespace.resumeSteps({
+        steps, dryRun: true,
+        execute: async () => { calls += 1; return { ok: false, failureClass: 'policy-denied' }; },
+      });
+      if (calls !== 0 || preview.steps?.some((step) => Object.hasOwn(step, 'failureClass'))) {
+        return { ok: false, message: 'a dry run executed a step or added a failure class' };
+      }
+      return { ok: true, message: 'unknown classes fail, known classes stay, dry runs add none' };
+    }),
+  }),
+  probe({
     id: 'seed-lease-refuses-second-runner',
     point: 'behavior',
     applies: 'seed',
@@ -553,6 +584,152 @@ export const capillaryProbes = Object.freeze([
         return { ok: false, message: 'a read under a stable epoch was not served with its epoch' };
       }
       return { ok: true, message: 'a moved epoch refuses the packet; a stable one serves it' };
+    }),
+  }),
+  probe({
+    id: 'capillary-search-refuses-fused-score',
+    point: 'behavior',
+    applies: 'capillary',
+    summary: 'Literal search refuses a record with a fused score and returns no hits. A search that matches nothing is an untrusted empty list.',
+    check: since('1.2.0', 'literal search', async ({ namespace }) => {
+      const record = { ...sourceInput(namespace), text: 'matching text', recency: 1 };
+      const fused = await namespace.searchSources({ query: 'matching', records: [{ ...record, score: 3 }] });
+      if (fused.ok !== false || fused.untrusted !== true || fused.error?.code !== 'fused-score' || fused.hits?.length !== 0) {
+        return { ok: false, message: `a fused score was accepted: ${JSON.stringify(fused)}` };
+      }
+      const none = await namespace.searchSources({ query: 'absent', records: [{ ...record, recency: null }] });
+      if (none.ok !== true || none.untrusted !== true || !Array.isArray(none.hits) || none.hits.length !== 0 || none.count !== 0) {
+        return { ok: false, message: `a search with no match was not an untrusted empty list: ${JSON.stringify(none)}` };
+      }
+      return { ok: true, message: 'a fused score is refused and an empty result stays untrusted' };
+    }),
+  }),
+  probe({
+    id: 'capillary-thread-declares-cuts',
+    point: 'behavior',
+    applies: 'capillary',
+    summary: 'A thread over supplied messages refuses an absent conversation, fails on a message without provenance, and declares a cut at the limit or the 200 ceiling.',
+    check: since('1.3.0', 'conversation threads', ({ namespace }) => {
+      const message = (id, conversationId = 'c1') => ({ ...sourceInput(namespace), id, conversationId, text: `text ${id}`, recency: null });
+      const absent = namespace.readThread({ conversationId: 'absent', messages: [message('m1')], limit: 5 });
+      if (absent.ok !== false || absent.untrusted !== true || absent.error?.code !== 'conversation-not-found' || absent.messages?.length !== 0) {
+        return { ok: false, message: 'an absent conversation returned an empty thread' };
+      }
+      const invalid = namespace.readThread({
+        conversationId: 'c1', messages: [message('m1'), { ...message('m2'), evidenceClass: undefined }], limit: 5,
+      });
+      if (invalid.ok !== false || invalid.untrusted !== true || invalid.messages?.length !== 0) {
+        return { ok: false, message: 'a message that fails recordSource was dropped silently' };
+      }
+      const three = [message('m1'), message('m2'), message('m3'), message('x1', 'c2')];
+      const cut = namespace.readThread({ conversationId: 'c1', messages: three, limit: 2 });
+      if (cut.ok !== true || cut.untrusted !== true || cut.count !== 2 || cut.truncated !== true || cut.continuationAvailable !== true) {
+        return { ok: false, message: 'a thread longer than its limit did not declare the cut' };
+      }
+      const whole = namespace.readThread({ conversationId: 'c1', messages: three, limit: 3 });
+      if (whole.count !== 3 || whole.truncated !== false || whole.continuationAvailable !== false
+        || whole.messages.some((item) => item.evidenceClass === undefined || item.confidence === undefined)) {
+        return { ok: false, message: 'a thread within its limit declared a cut or lost evidence classification' };
+      }
+      const long = Array.from({ length: 201 }, (_, index) => message(`m${index}`));
+      const ceiling = namespace.readThread({ conversationId: 'c1', messages: long, limit: 500 });
+      if (ceiling.count !== 200 || ceiling.continuationAvailable !== true) {
+        return { ok: false, message: `the thread ceiling did not hold at 200: carried ${ceiling.count}` };
+      }
+      return { ok: true, message: 'threads refuse absences, keep classification, and declare cuts' };
+    }),
+  }),
+  probe({
+    id: 'capillary-recent-uses-caller-recency',
+    point: 'behavior',
+    applies: 'capillary',
+    summary: 'A recent list orders by the caller\'s recency, newest first, accepts an empty input, refuses a non-positive limit, and returns nothing under a moved deletion epoch.',
+    check: since('1.3.0', 'recent conversations', async ({ namespace }) => {
+      const conversations = [1, 7, 3].map((recency) => ({ id: `c${recency}`, title: `t${recency}`, recency }));
+      const listed = await namespace.listRecent({ conversations, limit: 2 });
+      if (JSON.stringify(listed.conversations?.map((item) => item.conversationId)) !== '["c7","c3"]') {
+        return { ok: false, message: `recent did not order by the caller's recency: ${JSON.stringify(listed.conversations)}` };
+      }
+      if (listed.untrusted !== true || listed.truncated !== true || listed.continuationAvailable !== true) {
+        return { ok: false, message: 'a cut recent list was not declared in an untrusted result' };
+      }
+      const empty = await namespace.listRecent({ conversations: [] });
+      if (empty.ok !== true || empty.untrusted !== true || empty.conversations?.length !== 0) {
+        return { ok: false, message: 'an empty recent input was not a successful empty list' };
+      }
+      const zero = await namespace.listRecent({ conversations, limit: 0 });
+      if (zero.ok !== false || zero.untrusted !== true) {
+        return { ok: false, message: 'a non-positive recent limit was accepted' };
+      }
+      let epoch = 3;
+      const moving = [{ id: 'c1', get title() { epoch += 1; return 'title'; }, recency: 1 }];
+      const stale = await namespace.listRecent({ conversations: moving, readEpoch: () => epoch });
+      if (stale.ok !== false || stale.code !== 'deletion-epoch-changed' || stale.conversations?.length !== 0) {
+        return { ok: false, message: `a recent list the epoch moved under was served: ${JSON.stringify(stale)}` };
+      }
+      return { ok: true, message: 'recent orders by caller recency and refuses a moved epoch' };
+    }),
+  }),
+  probe({
+    id: 'capillary-context-brief-invents-nothing',
+    point: 'behavior',
+    applies: 'capillary',
+    summary: 'A context brief picks the newest operator intent and verified outcome, leaves an absent class null, gives a recency tie to the later record, and echoes the query without filtering.',
+    check: since('1.3.0', 'context briefs', ({ namespace }) => {
+      const record = (id, evidenceClass, recency, text = `text ${id}`) => ({ ...sourceInput(namespace), id, evidenceClass, recency, text });
+      const bare = namespace.contextBrief({ records: [record('p', 'model-proposal', 9)] });
+      if (bare.ok !== true || bare.untrusted !== true || bare.brief?.latestOperatorGoal !== null || bare.brief?.latestVerifiedOutcome !== null) {
+        return { ok: false, message: 'the brief invented a goal or outcome for an absent class' };
+      }
+      const records = [
+        record('first', 'operator-intent', 4, 'abcdef'),
+        record('second', 'operator-intent', 4, 'abcdef'),
+        record('older', 'operator-intent', 2),
+        record('done', 'verified-outcome', 1),
+      ];
+      const brief = namespace.contextBrief({ records, query: '  unrelated  ', excerptChars: 3 });
+      const goal = brief.brief?.latestOperatorGoal;
+      if (goal?.sourceId !== 'second') {
+        return { ok: false, message: `a recency tie did not go to the later record: ${goal?.sourceId}` };
+      }
+      if (brief.query !== '  unrelated  ' || brief.brief.latestVerifiedOutcome?.sourceId !== 'done') {
+        return { ok: false, message: 'the query was changed or filtered the records' };
+      }
+      if (!Array.isArray(brief.brief.openFollowups) || brief.brief.openFollowups.length !== 0) {
+        return { ok: false, message: 'the brief listed follow-ups it cannot know' };
+      }
+      if (goal.shortened !== true || goal.carried !== 3 || goal.cut !== 3) {
+        return { ok: false, message: `a cut excerpt was not declared: ${JSON.stringify(goal)}` };
+      }
+      return { ok: true, message: 'the brief picks newest by class, nulls absences, and declares cuts' };
+    }),
+  }),
+  probe({
+    id: 'capillary-trace-keeps-missing-start',
+    point: 'behavior',
+    applies: 'capillary',
+    summary: 'A trace wraps the parent walk in an untrusted envelope, keeps a missing start missing, and carries versions only when the caller supplies them.',
+    check: since('1.3.0', 'trace envelopes', ({ namespace }) => {
+      const missing = namespace.traceSource({ startId: 'ghost', parentsById: new Map([['other', null]]) });
+      if (missing.ok !== true || missing.untrusted !== true || missing.stop !== 'missing' || missing.at !== 'ghost'
+        || missing.parentIds?.length !== 0) {
+        return { ok: false, message: 'a missing start was given a parent' };
+      }
+      const parentsById = new Map([['child', 'parent'], ['parent', null]]);
+      const walked = namespace.traceSource({ startId: 'child', parentsById });
+      if (JSON.stringify(walked.parentIds) !== '["parent"]' || walked.stop !== 'root' || Object.hasOwn(walked, 'versions')) {
+        return { ok: false, message: 'the trace did not match the parent walk or fetched versions unasked' };
+      }
+      const versions = [{ revision: 1 }];
+      const withVersions = namespace.traceSource({ startId: 'child', parentsById, versions });
+      if (JSON.stringify(withVersions.versions) !== JSON.stringify(versions)) {
+        return { ok: false, message: 'supplied versions were not carried' };
+      }
+      const malformed = namespace.traceSource({ startId: '', parentsById });
+      if (malformed.ok !== false || malformed.untrusted !== true) {
+        return { ok: false, message: 'a malformed trace was not an untrusted error' };
+      }
+      return { ok: true, message: 'the trace keeps missing starts missing and fetches nothing' };
     }),
   }),
 ]);

@@ -50,6 +50,22 @@ An `unknown` is declared with its reason, carried to the verdict math, and never
 
 ## Changes
 
+- `0.6.0` — six versioned behavior probes check the following contracts.
+  - Seed `0.6.0` fails a step that reports an unknown failure class, keeps a known
+    class on the failed step, and adds no class in a dry run
+    (`seed-failure-class-honest`).
+  - Capillary `1.2.0` refuses a fused search score and returns an untrusted empty
+    list when nothing matches (`capillary-search-refuses-fused-score`).
+  - Capillary `1.3.0` refuses an absent thread conversation and declares thread
+    cuts (`capillary-thread-declares-cuts`), orders a recent list by the caller's
+    recency and refuses a moved epoch (`capillary-recent-uses-caller-recency`),
+    leaves an absent brief class null and gives a recency tie to the later record
+    (`capillary-context-brief-invents-nothing`), and keeps a missing trace start
+    missing (`capillary-trace-keeps-missing-start`).
+
+  A checkout older than each version reads `unknown` for that probe. No existing
+  probe changed.
+
 - `0.5.0` — seven versioned behavior probes check the following contracts.
   - Seed `0.5.0` reports a dry run without executing steps.
   - Capillary `1.0.0` requires evidence classification on recorded sources, and
