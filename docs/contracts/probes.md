@@ -50,6 +50,18 @@ An `unknown` is declared with its reason, carried to the verdict math, and never
 
 ## Changes
 
+- `0.5.0` — seven versioned behavior probes check the following contracts.
+  - Seed `0.5.0` reports a dry run without executing steps.
+  - Capillary `1.0.0` requires evidence classification on recorded sources, and
+    `1.1.0` returns an untrusted bounded-read envelope.
+  - Myosotis `1.0.0` refuses model-inferred personal provenance, and `1.1.0` bounds
+    recall and checks the reported counts.
+  - Aestivation `0.5.0` refuses correction scope expansion before changing the lineage.
+  - Drosera `0.5.0` exposes only promoted MIT skills in its catalog.
+
+  The existing digest and consent probes supply the metadata that each subject
+  requires as of `1.0.0`. Earlier and absent subjects remain unknown for new claims.
+
 - `0.4.0` — `runProbeAsync`, and `familyGridAsync` in the grid, await asynchronous
   checks; the bundle runner uses them. `runProbe` and `familyGrid` keep their results
   for every synchronous check and record an asynchronous one as `unknown`. Seven

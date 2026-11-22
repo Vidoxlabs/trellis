@@ -62,6 +62,24 @@ function forgetRequest(namespace, id) {
   return atLeast(namespace, '0.4.0') ? { id, confirmed: true, key: `trellis-${id}` } : id;
 }
 
+function sourceInput(namespace) {
+  const base = { id: 's', title: 'Source note', digest: 'a'.repeat(64), origin: 'text', originRef: 'notes' };
+  if (!atLeast(namespace, '1.0.0')) return base;
+  return { ...base, evidenceClass: 'model-proposal', confidence: 'model-unverified' };
+}
+
+function personalInput(namespace) {
+  const base = { id: 'p-1', kind: 'personal-consented', scope: 'personal', text: 'Prefers mornings.' };
+  if (!atLeast(namespace, '1.0.0')) return base;
+  return { ...base, sensitivity: 'internal', provenance: { source: 'explicit-user' } };
+}
+
+function personalConsent(namespace) {
+  return namespace.consentState({
+    grants: [{ subject: 'principal', scope: 'personal', grantedBy: 'principal' }],
+  });
+}
+
 // The skill input a drosera checkout accepts. From 0.4.0 a skill also carries
 // procedure, guardrails, and verification; before it, name, summary, and
 // instructions were the whole shape.
@@ -246,6 +264,26 @@ export const seedProbes = Object.freeze([
     }),
   }),
   probe({
+    id: 'seed-dry-run-skips-execution',
+    point: 'behavior',
+    applies: 'seed',
+    summary: 'A dry run reports completed and pending steps without calling the executor or changing completed ids.',
+    check: since('0.5.0', 'resume dry run', async ({ namespace }) => {
+      let calls = 0;
+      const report = await namespace.resumeSteps({
+        steps: [{ id: 'prepare' }, { id: 'apply' }], completed: ['prepare'], dryRun: true,
+        execute: async () => { calls += 1; return { ok: true }; },
+      });
+      if (calls !== 0) return { ok: false, message: 'the dry run called execute' };
+      const outcomes = report.steps.map(step => [step.id, step.outcome]);
+      if (report.status !== 'dry_run' || JSON.stringify(outcomes) !== '[["prepare","skipped"],["apply","would_run"]]'
+        || JSON.stringify(report.completed) !== '["prepare"]') {
+        return { ok: false, message: 'the dry run changed completed ids or misreported the pending step' };
+      }
+      return { ok: true, message: 'the dry run reported pending work without executing it' };
+    }),
+  }),
+  probe({
     id: 'seed-lease-refuses-second-runner',
     point: 'behavior',
     applies: 'seed',
@@ -349,8 +387,12 @@ export const capillaryProbes = Object.freeze([
     applies: 'capillary',
     summary: 'A source without a 64-hex digest never records, and an item without its source digests never enters a packet.',
     check: ({ namespace }) => {
+      const input = sourceInput(namespace);
+      if (namespace.recordSource(input).digest !== input.digest) {
+        return { ok: false, message: 'a valid source did not retain its digest' };
+      }
       const badSource = expectThrow(
-        () => namespace.recordSource({ id: 's', title: 't', digest: 'not-hex', origin: 'text', originRef: 'r' }),
+        () => namespace.recordSource({ ...input, digest: 'not-hex' }),
         'source with a malformed digest'
       );
       if (badSource.ok === false) return badSource;
@@ -363,6 +405,55 @@ export const capillaryProbes = Object.freeze([
       if (badItem.ok === false) return badItem;
       return { ok: true, message: 'digests gate admission at both layers' };
     },
+  }),
+  probe({
+    id: 'capillary-recorded-evidence-required',
+    point: 'behavior',
+    applies: 'capillary',
+    summary: 'Recorded sources require evidence class and confidence. Unknown sources remain unclassified.',
+    check: since('1.0.0', 'recorded-source evidence classification', ({ namespace }) => {
+      const input = sourceInput(namespace);
+      const recorded = namespace.recordSource(input);
+      if (recorded.evidenceClass !== input.evidenceClass || recorded.confidence !== input.confidence || recorded.origin !== input.origin) {
+        return { ok: false, message: 'recording a source changed its evidence classification or origin' };
+      }
+      for (const field of ['evidenceClass', 'confidence']) {
+        const { [field]: omitted, ...incomplete } = input;
+        if (!rejects(() => namespace.recordSource(incomplete))) {
+          return { ok: false, message: `a recorded source omitted ${field} and was accepted` };
+        }
+      }
+      const unknown = namespace.recordUnknownSource({ ...input, reason: 'read-failed' });
+      if (unknown.status !== 'unknown' || Object.hasOwn(unknown, 'evidenceClass') || Object.hasOwn(unknown, 'confidence')) {
+        return { ok: false, message: 'an unknown source gained an evidence classification' };
+      }
+      return { ok: true, message: 'recorded sources require both fields and unknowns stay unclassified' };
+    }),
+  }),
+  probe({
+    id: 'capillary-bounded-read-envelope',
+    point: 'behavior',
+    applies: 'capillary',
+    summary: 'A bounded read reports cuts and continuation. Both successful and missing-source results are untrusted.',
+    check: since('1.1.0', 'bounded reads', ({ namespace }) => {
+      const source = namespace.recordSource(sourceInput(namespace));
+      const input = { sourceId: source.id, sources: [source], text: 'abcde', tokenBudget: 1 };
+      const cut = namespace.readSource(input);
+      if (cut.ok !== true || cut.untrusted !== true || cut.text !== 'abcd' || cut.tokenEstimate !== 1
+        || cut.requestedTokenBudget !== 1 || cut.truncated !== true || cut.continuationAvailable !== true) {
+        return { ok: false, message: 'the bounded read did not declare the cut in an untrusted result' };
+      }
+      const whole = namespace.readSource({ ...input, tokenBudget: 2 });
+      if (whole.ok !== true || whole.untrusted !== true || whole.text !== input.text || whole.truncated !== false || whole.continuationAvailable !== false) {
+        return { ok: false, message: 'a whole read misreported its text, trust, or continuation' };
+      }
+      const missing = namespace.readSource({ ...input, sourceId: 'missing' });
+      if (missing.ok !== false || missing.untrusted !== true || missing.error?.code !== 'source-not-found'
+        || missing.continuationAvailable !== false || Object.hasOwn(missing, 'text')) {
+        return { ok: false, message: 'a missing source failed to return an untrusted error without text' };
+      }
+      return { ok: true, message: 'bounded reads declare cuts, continuation, and missing sources' };
+    }),
   }),
   probe({
     id: 'capillary-ledger-audits-its-writer',
@@ -518,18 +609,12 @@ export const myosotisProbes = Object.freeze([
     summary: 'Personal-consented memory is refused admission without a live grant, and the refuse carries its reason.',
     check: ({ namespace }) => {
       const store = namespace.openStore();
-      const refused = namespace.admitMemory(store, namespace.consentState({}), {
-        id: 'p-1', kind: 'personal-consented', scope: 'personal', text: 'Prefers mornings.',
-      });
+      const input = personalInput(namespace);
+      const refused = namespace.admitMemory(store, namespace.consentState({}), input);
       if (refused.admitted !== false || !/consent/.test(refused.reason)) {
-        return { ok: false, message: `personal memory admitted without consent: ${JSON.stringify(refused)}` };
+        return { ok: false, message: 'personal memory did not report the missing consent grant' };
       }
-      const grant = namespace.consentState({
-        grants: [{ subject: 'ada', scope: 'personal', grantedBy: 'ada' }],
-      });
-      const admitted = namespace.admitMemory(store, grant, {
-        id: 'p-1', kind: 'personal-consented', scope: 'personal', text: 'Prefers mornings.',
-      });
+      const admitted = namespace.admitMemory(store, personalConsent(namespace), input);
       if (admitted.admitted !== true) {
         return { ok: false, message: `personal memory refused despite a live grant: ${admitted.reason}` };
       }
@@ -643,6 +728,64 @@ export const myosotisProbes = Object.freeze([
         return { ok: false, message: 'repeating the same forget key bumped the epoch again' };
       }
       return { ok: true, message: 'forget is confirmed and keyed; chains tombstone under the named id; projections carry no text' };
+    }),
+  }),
+  probe({
+    id: 'myosotis-personal-provenance-required',
+    point: 'behavior',
+    applies: 'myosotis',
+    summary: 'Personal admission requires explicit user confirmation provenance even under a live grant.',
+    check: since('1.0.0', 'personal-memory provenance', ({ namespace }) => {
+      const store = namespace.openStore();
+      const consent = personalConsent(namespace);
+      const input = personalInput(namespace);
+      const denied = namespace.admitMemory(store, consent, { ...input, provenance: { source: 'model-inferred' } });
+      if (denied.admitted !== false || denied.store !== store) {
+        return { ok: false, message: 'model-inferred provenance did not refuse admission without changes' };
+      }
+      const kept = namespace.admitMemory(store, consent, input);
+      if (kept.admitted !== true || kept.record?.provenance?.source !== 'explicit-user' || kept.record.sensitivity !== input.sensitivity) {
+        return { ok: false, message: 'personal memory did not retain its confirmed provenance and sensitivity' };
+      }
+      return { ok: true, message: 'personal admission requires explicit-user provenance' };
+    }),
+  }),
+  probe({
+    id: 'myosotis-bounded-recall',
+    point: 'behavior',
+    applies: 'myosotis',
+    summary: 'Bounded recall refuses impossible counts and selects eligible text within caller and library limits.',
+    check: since('1.1.0', 'bounded recall', ({ namespace }) => {
+      const records = [
+        { id: 'excluded', text: 'skip', sensitivity: 'outside-policy' },
+        { id: 'first', text: 'abcd', sensitivity: 'public' },
+        { id: 'too-long', text: 'longer note', sensitivity: 'internal' },
+        { id: 'last', text: 'ef', sensitivity: 'restricted' },
+      ];
+      const input = { records, maxChars: 6 };
+      for (const counts of [
+        { candidateCount: 4, policyEligibleCount: 3, selectedCount: 4 },
+        { candidateCount: 4, policyEligibleCount: 5, selectedCount: 2 },
+      ]) {
+        if (!rejects(() => namespace.recallBounded({ ...input, counts }))) {
+          return { ok: false, message: 'inconsistent recall counts were accepted' };
+        }
+      }
+      const recall = namespace.recallBounded(input);
+      const selected = recall.records.map(({ id, text }) => [id, text]);
+      if (recall.candidateCount !== 4 || recall.policyEligibleCount !== 3 || recall.selectedCount !== 2 || recall.usedChars !== 6
+        || recall.maxChars !== 6 || JSON.stringify(selected) !== '[["first","abcd"],["last","ef"]]') {
+        return { ok: false, message: 'bounded recall misreported its counts or returned text outside its policy' };
+      }
+      const capped = namespace.recallBounded({
+        records: [{ id: 'at-limit', text: 'x'.repeat(6000), sensitivity: 'public' }, records[1]],
+        maxChars: 7000,
+      });
+      if (capped.maxChars !== 6000 || capped.usedChars !== 6000 || capped.records.length !== 1
+        || capped.records[0].text.length !== 6000) {
+        return { ok: false, message: 'bounded recall did not enforce its own character ceiling' };
+      }
+      return { ok: true, message: 'recall validates counts, sensitivity, and both character limits' };
     }),
   }),
 ]);
@@ -813,6 +956,44 @@ export const aestivationProbes = Object.freeze([
       return { ok: true, message: 'corrections mint a new digest; the judge does not apply its own patch' };
     }),
   }),
+  probe({
+    id: 'aestivation-correction-keeps-scope',
+    point: 'behavior',
+    applies: 'aestivation',
+    summary: 'A scope-expanding correction refuses before changing the active proposal or spending a replan.',
+    check: since('0.5.0', 'scope-preserving corrections', ({ namespace }) => {
+      const previous = namespace.planProposal({
+        id: 'plan-1', objective: 'Draft the guide.', steps: [{ stage: 'work', title: 'Draft' }],
+      });
+      const before = JSON.stringify(previous);
+      const correct = (proposal, objective, scope = {}) => namespace.correctPlan({
+        previous: proposal, author: 'implementer', objective, ...scope,
+        verdict: namespace.verdictRecord({
+          planId: proposal.id, planDigest: proposal.digest, decision: 'revise', judge: 'reviewer', reasons: ['clarify it'],
+        }),
+      });
+      for (const scope of [
+        { scopeExpanding: true }, { expandWorkspace: 'another-workspace' },
+        { expandPaths: ['additional-sources'] }, { newCriterionGrant: true },
+      ]) {
+        try {
+          correct(previous, 'Widen the guide.', scope);
+        } catch (error) {
+          if (error.code === 'authority-required') continue;
+          throw error;
+        }
+        return { ok: false, message: 'a scope-expanding correction was accepted' };
+      }
+      if (JSON.stringify(previous) !== before || rejects(() => namespace.assertCurrentPlanResult(previous, {
+        planId: previous.id, planDigest: previous.digest,
+      }))) {
+        return { ok: false, message: 'scope refusal changed the active lineage' };
+      }
+      const first = correct(previous, 'Clarify the beginning.').proposal;
+      correct(first, 'Clarify the ending.');
+      return { ok: true, message: 'scope refusal leaves the prior plan current and both replans available' };
+    }),
+  }),
 ]);
 
 export const droseraProbes = Object.freeze([
@@ -954,6 +1135,36 @@ export const droseraProbes = Object.freeze([
         }
       }
       return { ok: true, message: 'skills carry procedure, guardrails, verification; deprecated is terminal' };
+    }),
+  }),
+  probe({
+    id: 'drosera-catalog-public-skills',
+    point: 'behavior',
+    applies: 'drosera',
+    summary: 'The catalog lists promoted MIT skills and refuses non-public or missing slugs.',
+    check: since('0.5.0', 'public skill catalog', ({ namespace }) => {
+      const draft = name => namespace.skill(skillInput(namespace, { name, summary: 'Review the source list.' }));
+      const promote = skill => namespace.transitionSkill(skill, 'promoted', { approver: 'reviewer' });
+      const ready = promote(draft('review-sources'));
+      const retired = namespace.transitionSkill(promote(draft('retired-review')), 'deprecated', { reason: 'Replaced.' });
+      const catalog = namespace.skillCatalog([
+        { skill: ready, license: 'MIT' }, { skill: draft('draft-review'), license: 'MIT' },
+        { skill: retired, license: 'MIT' }, { skill: promote(draft('other-license')), license: 'Apache-2.0' },
+      ]);
+      const items = catalog.list();
+      if (items.length !== 1 || items[0].slug !== ready.name || items[0].license !== 'MIT' || items[0].skill.lifecycle !== 'promoted') {
+        return { ok: false, message: 'the catalog listed a skill outside its public rule or omitted the public skill' };
+      }
+      const found = catalog.read(ready.name);
+      if (found.slug !== ready.name || found.skill.name !== ready.name || found.skill.lifecycle !== 'promoted' || found.license !== 'MIT') {
+        return { ok: false, message: 'the promoted MIT skill could not be read by slug' };
+      }
+      for (const slug of ['draft-review', 'retired-review', 'other-license', 'missing']) {
+        if (!rejects(() => catalog.read(slug))) {
+          return { ok: false, message: `the catalog did not refuse ${slug}` };
+        }
+      }
+      return { ok: true, message: 'only promoted MIT skills list or read as public' };
     }),
   }),
 ]);

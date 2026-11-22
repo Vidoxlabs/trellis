@@ -200,8 +200,9 @@ test('the default myosotis probes pass against a faithful 0.1.0 fixture, and lat
   const unknown = results.filter((r) => r.status === 'unknown');
   assert.deepEqual(unknown.map((r) => r.id), [
     'myosotis-stale-projection-refused', 'myosotis-reconsent-by-sequence', 'myosotis-forget-confirmed-and-keyed',
+    'myosotis-personal-provenance-required', 'myosotis-bounded-recall',
   ]);
-  for (const result of unknown) assert.match(result.detail, /arrived in 0\.[234]\.0; this checkout declares 0\.1\.0/);
+  for (const result of unknown) assert.match(result.detail, /arrived in (0\.[234]\.0|1\.[01]\.0); this checkout declares 0\.1\.0/);
 });
 
 test('a broken forget fails the structural probe and nothing launders it', () => {
@@ -472,7 +473,10 @@ test('the myosotis probes speak the 0.4.0 forget shape and pass a faithful 0.4.0
   const results = myosotisProbes
     .filter((p) => p.id !== 'myosotis-reconsent-by-sequence')            // consent ordering is not modeled here
     .map((p) => runProbe(p, { myosotis: subject }));
-  assert.deepEqual(results.filter((r) => r.status !== 'pass').map((r) => [r.id, r.detail]), []);
+  assert.deepEqual(results.filter((r) => r.status === 'fail').map((r) => [r.id, r.detail]), []);
+  assert.deepEqual(results.filter((r) => r.status === 'unknown').map((r) => r.id), [
+    'myosotis-personal-provenance-required', 'myosotis-bounded-recall',
+  ]);
 });
 
 test('the 0.4.0 forget probe fails a fixture that forgets a bare id, re-bumps a key, or projects text', () => {
@@ -673,6 +677,74 @@ test('the aestivation 0.4.0 probes pass a faithful fixture and fail each broken 
   const older = runProbe(byId(aestivationProbes, 'aestivation-correction-new-digest'), { aestivation: { namespace: { VERSION: '0.3.0' }, pkg: null } });
   assert.equal(older.status, 'unknown');
 });
+
+test('the digest probe isolates digest validation on a classified source', () => {
+  const namespace = {
+    VERSION: '1.0.0',
+    recordSource: (input) => {
+      if (!input.evidenceClass || !input.confidence) throw new Error('classification required');
+      return input;
+    },
+    buildContextPacket: () => { throw new Error('item digest invalid'); },
+  };
+  const result = runProbe(byId(capillaryProbes, 'capillary-digest-gates-admission'), { capillary: { namespace } });
+  assert.equal(result.status, 'fail');
+  assert.match(result.detail, /source with a malformed digest/);
+});
+
+test('the consent probe supplies valid personal metadata to myosotis 1.0.0', () => {
+  const previous = memoryFixture040();
+  const namespace = {
+    ...previous, VERSION: '1.0.0',
+    admitMemory: (store, state, input) => {
+      if (input.kind === 'personal-consented' && (!input.sensitivity || input.provenance?.source !== 'explicit-user')) {
+        return { store, admitted: false, reason: 'personal record fields required' };
+      }
+      return previous.admitMemory(store, state, input);
+    },
+  };
+  const result = runProbe(byId(myosotisProbes, 'myosotis-consent-precedes-keep'), { myosotis: { namespace } });
+  assert.equal(result.status, 'pass', result.detail);
+});
+
+const followUpProbes = [
+  ['seed', 'seed-dry-run-skips-execution', '0.5.0', '0.4.0', seedFixture030(), /dry run called execute/],
+  ['capillary', 'capillary-recorded-evidence-required', '1.0.0', '0.3.0', {
+    recordSource: input => ({ ...input, status: 'recorded' }),
+  }, /omitted evidenceClass/],
+  ['capillary', 'capillary-bounded-read-envelope', '1.1.0', '1.0.0', {
+    recordSource: input => input,
+    readSource: ({ text }) => ({ ok: true, untrusted: true, text, truncated: false }),
+  }, /bounded read did not declare the cut/],
+  ['myosotis', 'myosotis-personal-provenance-required', '1.0.0', '0.4.0', memoryFixture040(), /model-inferred provenance/],
+  ['myosotis', 'myosotis-bounded-recall', '1.1.0', '1.0.0', {
+    recallBounded: () => ({ records: [] }),
+  }, /inconsistent recall counts were accepted/],
+  ['aestivation', 'aestivation-correction-keeps-scope', '0.5.0', '0.4.0', {
+    ...aestivationFixture040(),
+    correctPlan: () => { throw Object.assign(new Error('scope refused'), { code: 'authority-required' }); },
+    assertCurrentPlanResult: () => { throw Object.assign(new Error('retired'), { code: 'order-superseded' }); },
+  }, /scope refusal changed the active lineage/],
+  ['drosera', 'drosera-catalog-public-skills', '0.5.0', '0.4.0', {
+    ...skillSubject040().namespace,
+    skillCatalog: entries => ({ list: () => entries.map(entry => ({ ...entry, slug: entry.skill.name })) }),
+  }, /catalog listed a skill outside its public rule/],
+];
+
+for (const [subject, id, version, earlier, broken, detail] of followUpProbes) {
+  test(`${id} catches a regression and leaves earlier or absent subjects unknown`, async () => {
+    const check = byId(defaultProbes, id);
+    assert.ok(check, `missing probe ${id}`);
+    const run = namespace => runProbeAsync(check, { [subject]: { namespace } });
+    assert.equal((await runProbeAsync(check, {})).status, 'unknown');
+    const older = await run({ VERSION: earlier });
+    assert.equal(older.status, 'unknown');
+    assert.ok(older.detail.includes(version));
+    const failed = await run({ ...broken, VERSION: version });
+    assert.equal(failed.status, 'fail');
+    assert.match(failed.detail, detail);
+  });
+}
 
 test('the exported version matches the package', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
