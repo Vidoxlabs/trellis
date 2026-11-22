@@ -44,6 +44,7 @@ The family follows one design law: ordinary botanical words for public products,
 | [`drosera`](https://github.com/Vidoxlabs/drosera) | Tool faces, skills, hooks, cookbooks |
 | `trellis` (this repo) | Multi-point testing with dated evidence |
 | [`bloom`](https://github.com/Vidoxlabs/bloom) | The team workspace harness |
+| [`docs`](https://github.com/Vidoxlabs/docs) | Family documentation, synced from every public repository |
 
 The line grows against the trellis: the products are the plants; this is the lattice they are checked against.
 

@@ -50,7 +50,7 @@ Do not declare bloom or videsign probed. The engine's subjects are the module re
 
 A consistency failure means two libraries disagree. Record it. Do not repair either library from this checkout. The repair is a later task in the repository that mirrors, after the repository that moved has its own tests green. This repository's `npm test` stays green when those siblings are absent.
 
-## Where the other six live
+## Where the other seven live
 
 | The work | Repository |
 | --- | --- |
@@ -61,6 +61,7 @@ A consistency failure means two libraries disagree. Record it. Do not repair eit
 | Tool faces, skills, hooks, cookbooks | `drosera` |
 | Probes over those libraries | `trellis` (here) |
 | The team workspace a person opens | `bloom` |
+| Family documentation, synced from every public repository | `docs` |
 
 ## Skills
 
