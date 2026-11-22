@@ -50,6 +50,15 @@ An `unknown` is declared with its reason, carried to the verdict math, and never
 
 ## Changes
 
+- `0.6.2` — probe fix for drosera `2.0.0`, which promotes a skill only through
+  `review` and lists five lifecycle states. For a drosera checkout at `2.0.0` or
+  later, the probes move a draft to `review` before promoting it, and
+  `drosera-skill-record-and-lifecycle` expects `intake`, `draft`, `review`,
+  `promoted`, `deprecated` and checks that a draft is not promoted directly. Older
+  checkouts are probed as before. Before the fix, `drosera-catalog-public-skills`
+  threw on the refused direct promotion, and the record probe reported the five
+  states as drift. Drosera was not loosened, and no probe was added.
+
 - `0.6.1` — probe fix for drosera `1.0.0`, which requires `triggers`, `inputs`,
   `outputs`, `examples`, and `sources` on every skill. The skill input the probes
   build carries those lists for a drosera checkout at `1.0.0` or later, and

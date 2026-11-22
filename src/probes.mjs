@@ -111,6 +111,20 @@ function skillInput(namespace, fields) {
   return { ...fields, ...lists };
 }
 
+// The lifecycle a drosera checkout declares, and how it promotes. From 2.0.0 the
+// path is intake, draft, review, promoted, deprecated, and a draft reaches
+// promoted only through review; before it, a draft was promoted directly.
+function lifecycleStates(namespace) {
+  return atLeast(namespace, '2.0.0')
+    ? ['intake', 'draft', 'review', 'promoted', 'deprecated']
+    : ['draft', 'promoted', 'deprecated'];
+}
+
+function promoteSkill(namespace, record, approver) {
+  const ready = atLeast(namespace, '2.0.0') ? namespace.transitionSkill(record, 'review') : record;
+  return namespace.transitionSkill(ready, 'promoted', { approver });
+}
+
 function rejects(fn) {
   try {
     fn();
@@ -1304,7 +1318,7 @@ export const droseraProbes = Object.freeze([
     id: 'drosera-skill-record-and-lifecycle',
     point: 'behavior',
     applies: 'drosera',
-    summary: 'A skill needs procedure, guardrails, and verification beside its summary (from drosera 1.0.0 also triggers, inputs, outputs, examples, and sources), and its lifecycle is draft, promoted, or deprecated, with deprecated terminal.',
+    summary: 'A skill needs procedure, guardrails, and verification beside its summary (from drosera 1.0.0 also triggers, inputs, outputs, examples, and sources). Its lifecycle is draft, promoted, or deprecated (from 2.0.0 intake, draft, review, promoted, or deprecated, promoting only from review), with deprecated terminal.',
     check: since('0.4.0', 'skill records and lifecycle', ({ namespace }) => {
       const full = skillInput(namespace, { name: 'pre-flight', summary: 's' });
       for (const field of skillLists(namespace)) {
@@ -1314,17 +1328,20 @@ export const droseraProbes = Object.freeze([
         }
       }
       const states = [...(namespace.LIFECYCLE_STATES ?? [])];
-      if (JSON.stringify(states) !== JSON.stringify(['draft', 'promoted', 'deprecated'])) {
+      if (JSON.stringify(states) !== JSON.stringify(lifecycleStates(namespace))) {
         return { ok: false, message: `lifecycle states drifted: ${states.join(', ')}` };
       }
       const draft = namespace.skill(full);
       if (draft.lifecycle !== 'draft') return { ok: false, message: 'a new skill did not start as a draft' };
-      const promoted = namespace.transitionSkill(draft, 'promoted', { approver: 'reviewer' });
+      if (atLeast(namespace, '2.0.0') && !rejects(() => namespace.transitionSkill(draft, 'promoted', { approver: 'reviewer' }))) {
+        return { ok: false, message: 'a draft was promoted without review' };
+      }
+      const promoted = promoteSkill(namespace, draft, 'reviewer');
       const deprecated = namespace.transitionSkill(promoted, 'deprecated', { reason: 'replaced' });
       if (promoted.lifecycle !== 'promoted' || deprecated.lifecycle !== 'deprecated' || draft.lifecycle !== 'draft') {
         return { ok: false, message: 'a transition did not land, or changed the record it was given' };
       }
-      for (const to of ['draft', 'promoted', 'deprecated']) {
+      for (const to of lifecycleStates(namespace)) {
         if (!rejects(() => namespace.transitionSkill(deprecated, to, { approver: 'reviewer', reason: 'again' }))) {
           return { ok: false, message: `a deprecated skill moved to ${to}` };
         }
@@ -1339,7 +1356,7 @@ export const droseraProbes = Object.freeze([
     summary: 'The catalog lists promoted MIT skills and refuses non-public or missing slugs.',
     check: since('0.5.0', 'public skill catalog', ({ namespace }) => {
       const draft = name => namespace.skill(skillInput(namespace, { name, summary: 'Review the source list.' }));
-      const promote = skill => namespace.transitionSkill(skill, 'promoted', { approver: 'reviewer' });
+      const promote = skill => promoteSkill(namespace, skill, 'reviewer');
       const ready = promote(draft('review-sources'));
       const retired = namespace.transitionSkill(promote(draft('retired-review')), 'deprecated', { reason: 'Replaced.' });
       const catalog = namespace.skillCatalog([

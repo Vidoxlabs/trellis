@@ -584,6 +584,48 @@ test('the record probe fails a drosera 1.0.0 that accepts a skill without a requ
   }
 });
 
+// Drosera 2.0.0 promotes only through review: intake, draft, review, promoted, deprecated.
+function skillSubject200({ promotesDraft = false } = {}) {
+  const previous = skillSubject100().namespace;
+  const TRANSITIONS = {
+    intake: ['draft', 'deprecated'],
+    draft: promotesDraft ? ['review', 'promoted', 'deprecated'] : ['review', 'deprecated'],
+    review: ['promoted', 'draft', 'deprecated'],
+    promoted: ['deprecated'],
+    deprecated: [],
+  };
+  return {
+    namespace: {
+      ...previous,
+      VERSION: '2.0.0',
+      LIFECYCLE_STATES: ['intake', 'draft', 'review', 'promoted', 'deprecated'],
+      transitionSkill: (record, to) => {
+        if (!TRANSITIONS[record.lifecycle].includes(to)) throw new Error('cannot move');
+        return previous.skill({ ...record, lifecycle: to });
+      },
+    },
+    pkg: null,
+  };
+}
+
+test('the drosera probes promote through review for a 2.0.0 checkout', () => {
+  const drosera = skillSubject200();
+  for (const id of ['drosera-skill-record-and-lifecycle', 'drosera-catalog-public-skills', 'drosera-skill-names-refuse-vendors']) {
+    const result = runProbe(byId(droseraProbes, id), { drosera });
+    assert.equal(result.status, 'pass', `${id}: ${result.detail}`);
+  }
+});
+
+test('the record probe fails a drosera 2.0.0 that promotes a draft directly or keeps three states', () => {
+  const p = byId(droseraProbes, 'drosera-skill-record-and-lifecycle');
+  const direct = runProbe(p, { drosera: skillSubject200({ promotesDraft: true }) });
+  assert.equal(direct.status, 'fail');
+  assert.match(direct.detail, /draft was promoted without review/);
+  const three = skillSubject200();
+  three.namespace.LIFECYCLE_STATES = ['draft', 'promoted', 'deprecated'];
+  assert.match(runProbe(p, { drosera: three }).detail, /lifecycle states drifted/);
+});
+
 test('the lifecycle probe fails a drosera whose deprecated skills move, and is unknown before 0.4.0', () => {
   const p = byId(droseraProbes, 'drosera-skill-record-and-lifecycle');
   const moving = runProbe(p, { drosera: skillSubject040({ deprecatedMoves: true }) });
