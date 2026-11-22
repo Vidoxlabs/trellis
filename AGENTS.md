@@ -41,3 +41,48 @@ This is a public repository. No hostnames, addresses, ports, cluster names, cont
 - `npm test` must stay green with only this repository present. `npm run family` additionally exercises the bundle runner against the canonical workspace; its absence is a declared unknown, not an error.
 - Every verdict rule must be visible in a test. If it cannot be tested, it is a wish, and it must be labeled `planned`, not `implemented`.
 - Docs change with code or they do not change at all. There is no "docs later."
+
+## Stay in this province
+
+This repository probes the libraries from outside the call path. Seed is the floor. The four peers are capillary, myosotis, aestivation, and drosera. Bloom is the only composer. This task does not edit them. The core does not import them. An absent checkout is unknown, not a pass. A fail outranks an unknown. A dated note in `docs/evidence/` is one run, not a permanent health claim.
+
+Do not declare bloom or videsign probed. The engine's subjects are the module repositories.
+
+A consistency failure means two libraries disagree. Record it. Do not repair either library from this checkout. The repair is a later task in the repository that mirrors, after the repository that moved has its own tests green. This repository's `npm test` stays green when those siblings are absent.
+
+## Where the other six live
+
+| The work | Repository |
+| --- | --- |
+| Run records, tool identity, provider shape | `seed` |
+| Bounded retrieval and relations | `capillary` |
+| Consent, forget, and recall | `myosotis` |
+| Plans, verdicts, and the assembly gate | `aestivation` |
+| Tool faces, skills, hooks, cookbooks | `drosera` |
+| Probes over those libraries | `trellis` (here) |
+| The team workspace a person opens | `bloom` |
+
+## Skills
+
+This file is the working method. A probe is not a skill. A probe is deterministic code. A check that needs a model is not a probe.
+
+## Agents
+
+One working method lives here. Do not add a roster, and do not repair a sibling's code from this checkout. Record the verdict.
+
+## References
+
+Read in this order: this file, `docs/charter.md`, `docs/architecture.md`, `docs/contracts/`, `docs/interop.md`, `docs/evidence/`, then `src/`. `npm test` must pass with only this repository present.
+
+## Cookbook
+
+1. Read this file and the charter.
+2. Run `npm test`.
+3. Run `npm run family` only when the sibling checkouts are present. If they are absent, the operational point is unknown.
+4. Change a verdict rule only together with the test that holds it.
+
+This recipe does not execute the siblings' tools.
+
+## MCP
+
+This repository is not an MCP server. Do not commit an MCP configuration, a server address, or a credential. Probes call injected subjects. They do not open a remote service.
