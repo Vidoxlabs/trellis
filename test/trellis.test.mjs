@@ -529,6 +529,61 @@ test('the drosera probes and the vendor agreement speak the 0.4.0 skill shape', 
   assert.equal(agreement.status, 'pass', agreement.detail);
 });
 
+// Drosera 1.0.0 also requires triggers, inputs, outputs, examples, and sources.
+const SECTION_LISTS_100 = ['triggers', 'inputs', 'outputs', 'examples', 'sources'];
+
+function skillSubject100({ acceptsMissing = null } = {}) {
+  const previous = skillSubject040().namespace;
+  const skill = (input) => {
+    for (const field of SECTION_LISTS_100) {
+      if (field === acceptsMissing) continue;
+      if (!Array.isArray(input[field]) || input[field].length === 0) throw new Error(field);
+    }
+    return previous.skill(input);
+  };
+  const TRANSITIONS = { draft: ['promoted', 'deprecated'], promoted: ['deprecated'], deprecated: [] };
+  return {
+    namespace: {
+      ...previous,
+      VERSION: '1.0.0',
+      skill,
+      skillPack: (items) => items.map(skill),
+      transitionSkill: (record, to) => {
+        if (!TRANSITIONS[record.lifecycle].includes(to)) throw new Error('cannot move');
+        return skill({ ...record, lifecycle: to });
+      },
+      skillCatalog: (entries) => {
+        const listed = entries.map((entry) => ({ ...entry, skill: skill(entry.skill), slug: entry.skill.name }))
+          .filter((entry) => entry.skill.lifecycle === 'promoted' && entry.license === 'MIT');
+        return {
+          list: () => listed,
+          read: (slug) => { const item = listed.find((entry) => entry.slug === slug); if (!item) throw new Error('unavailable'); return item; },
+        };
+      },
+    },
+    pkg: null,
+  };
+}
+
+test('the drosera probes and the vendor agreement speak the 1.0.0 skill shape', () => {
+  const drosera = skillSubject100();
+  for (const id of ['drosera-skill-names-refuse-vendors', 'drosera-skill-record-and-lifecycle', 'drosera-catalog-public-skills']) {
+    const result = runProbe(byId(droseraProbes, id), { drosera });
+    assert.equal(result.status, 'pass', `${id}: ${result.detail}`);
+  }
+  const agreement = runProbe(byId(crossProbes, 'vendor-list-agreement'), { seed: grammarSubject(), drosera });
+  assert.equal(agreement.status, 'pass', agreement.detail);
+});
+
+test('the record probe fails a drosera 1.0.0 that accepts a skill without a required section list', () => {
+  const p = byId(droseraProbes, 'drosera-skill-record-and-lifecycle');
+  for (const field of SECTION_LISTS_100) {
+    const result = runProbe(p, { drosera: skillSubject100({ acceptsMissing: field }) });
+    assert.equal(result.status, 'fail');
+    assert.match(result.detail, new RegExp(`without ${field} was accepted`));
+  }
+});
+
 test('the lifecycle probe fails a drosera whose deprecated skills move, and is unknown before 0.4.0', () => {
   const p = byId(droseraProbes, 'drosera-skill-record-and-lifecycle');
   const moving = runProbe(p, { drosera: skillSubject040({ deprecatedMoves: true }) });

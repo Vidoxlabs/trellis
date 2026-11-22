@@ -82,15 +82,33 @@ function personalConsent(namespace) {
 
 // The skill input a drosera checkout accepts. From 0.4.0 a skill also carries
 // procedure, guardrails, and verification; before it, name, summary, and
-// instructions were the whole shape.
+// instructions were the whole shape. From 1.0.0 it also carries triggers,
+// inputs, outputs, examples, and sources.
+const SKILL_LISTS_040 = ['procedure', 'guardrails', 'verification'];
+const SKILL_LISTS_100 = ['triggers', 'inputs', 'outputs', 'examples', 'sources'];
+
+function skillLists(namespace) {
+  if (!atLeast(namespace, '0.4.0')) return [];
+  return atLeast(namespace, '1.0.0') ? [...SKILL_LISTS_040, ...SKILL_LISTS_100] : SKILL_LISTS_040;
+}
+
 function skillInput(namespace, fields) {
   if (!atLeast(namespace, '0.4.0')) return fields;
-  return {
-    ...fields,
+  const lists = {
     procedure: ['Read the face.'],
     guardrails: ['Call nothing the run did not admit.'],
     verification: ['The recorded intent matches the face.'],
   };
+  if (atLeast(namespace, '1.0.0')) {
+    Object.assign(lists, {
+      triggers: ['Before a call to a face.'],
+      inputs: ['The face and the admitted scope.'],
+      outputs: ['A call that matches the face.'],
+      examples: ['Read the face, then call it once.'],
+      sources: ['The skills contract.'],
+    });
+  }
+  return { ...fields, ...lists };
 }
 
 function rejects(fn) {
@@ -1286,10 +1304,10 @@ export const droseraProbes = Object.freeze([
     id: 'drosera-skill-record-and-lifecycle',
     point: 'behavior',
     applies: 'drosera',
-    summary: 'A skill needs procedure, guardrails, and verification beside its summary, and its lifecycle is draft, promoted, or deprecated, with deprecated terminal.',
+    summary: 'A skill needs procedure, guardrails, and verification beside its summary (from drosera 1.0.0 also triggers, inputs, outputs, examples, and sources), and its lifecycle is draft, promoted, or deprecated, with deprecated terminal.',
     check: since('0.4.0', 'skill records and lifecycle', ({ namespace }) => {
       const full = skillInput(namespace, { name: 'pre-flight', summary: 's' });
-      for (const field of ['procedure', 'guardrails', 'verification']) {
+      for (const field of skillLists(namespace)) {
         const { [field]: _dropped, ...missing } = full;
         if (!rejects(() => namespace.skill(missing))) {
           return { ok: false, message: `a skill without ${field} was accepted` };

@@ -50,6 +50,14 @@ An `unknown` is declared with its reason, carried to the verdict math, and never
 
 ## Changes
 
+- `0.6.1` — probe fix for drosera `1.0.0`, which requires `triggers`, `inputs`,
+  `outputs`, `examples`, and `sources` on every skill. The skill input the probes
+  build carries those lists for a drosera checkout at `1.0.0` or later, and
+  `drosera-skill-record-and-lifecycle` checks that a skill missing any of them is
+  refused. Before the fix, four drosera probes and `vendor-list-agreement` failed
+  because the probes built a `0.5.0` skill. Drosera was not loosened, and no probe
+  was added.
+
 - `0.6.0` — six versioned behavior probes check the following contracts.
   - Seed `0.6.0` fails a step that reports an unknown failure class, keeps a known
     class on the failed step, and adds no class in a dry run
