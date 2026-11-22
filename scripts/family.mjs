@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   FAMILY_MEMBERS,
   defaultProbes,
-  familyGrid,
+  familyGridAsync,
   probe,
 } from '../src/index.mjs';
 
@@ -71,7 +71,7 @@ const operational = FAMILY_MEMBERS.map((member) =>
   })
 );
 
-const grid = familyGrid({
+const grid = await familyGridAsync({
   subjects,
   probes: [...defaultProbes, ...operational],
 });

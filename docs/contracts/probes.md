@@ -30,12 +30,14 @@ consult `subjects`; only cross probes depend on more than their own.
 
 ```
 runProbe(probe, subjects) → { id, applies, point, subject, status, detail }
+runProbeAsync(probe, subjects) → Promise of the same result
 status   'pass' | 'fail' | 'unknown'
 detail   the message that says why
 ```
 
 - `pass` — the check returned `ok: true`.
 - `fail` — the check returned `ok: false`, or it threw; the detail carries the message or the error.
+- A check may return a promise when the claim it holds is asynchronous. `runProbeAsync` awaits it, and a rejection is a `fail` like a throw. `runProbe` does not wait: it records `unknown`, naming `runProbeAsync`, because it did not observe the outcome.
 - `unknown` — the subject is absent (a named probe whose subject is `null`), or the check returned `{ unknown: true, message }` for a reason it states, such as "grammar agreement needs both checkouts present" when one is missing.
 
 An `unknown` is declared with its reason, carried to the verdict math, and never resolved by wishful re-reading of other results.
@@ -47,6 +49,14 @@ An `unknown` is declared with its reason, carried to the verdict math, and never
 - Not a superset. A probe checks what is claimed claimed. Probing things the subject never claimed is a defect in the probe, not a failure in the subject.
 
 ## Changes
+
+- `0.4.0` — `runProbeAsync`, and `familyGridAsync` in the grid, await asynchronous
+  checks; the bundle runner uses them. `runProbe` and `familyGrid` keep their results
+  for every synchronous check and record an asynchronous one as `unknown`. Seven
+  probes hold the newer member claims from the versions that made them: seed `0.3.0`
+  resume, leases, and caller admission; capillary `0.3.0` separate relevance and
+  recency and the deletion-epoch refusal; aestivation `0.4.0` read-only intent and
+  corrections. The resume and epoch probes are asynchronous.
 
 - `0.3.0` — probes speak each member's call shape by its declared version. From myosotis
   `0.4.0` a forget is sent as a confirmed, keyed request; from drosera `0.4.0` a skill is

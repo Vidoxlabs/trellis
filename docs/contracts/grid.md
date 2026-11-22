@@ -6,6 +6,7 @@ Label: `specified` (rules), `implemented` in `src/grid.mjs` and `src/score.mjs`.
 
 ```
 familyGrid({ subjects, probes }) → { results, bySubject, verdict }
+familyGridAsync({ subjects, probes }) → Promise of the same grid, each probe awaited in order
 subjects   { name: { namespace, pkg } | null, ... } — null means absent
 probes     a list of probe records (see probes.md)
 results    one execution result per probe, in probe-list order

@@ -20,6 +20,9 @@ import {
   aestivationProbes,
   droseraProbes,
   crossProbes,
+  capillaryProbes,
+  runProbeAsync,
+  familyGridAsync,
   VERSION,
 } from '../src/index.mjs';
 import { readFileSync } from 'node:fs';
@@ -530,6 +533,145 @@ test('the lifecycle probe fails a drosera whose deprecated skills move, and is u
   const older = runProbe(p, { drosera: skillSubject() });
   assert.equal(older.status, 'unknown');
   assert.match(older.detail, /arrived in 0\.4\.0; this checkout declares 0\.3\.0/);
+});
+
+// The engine waits for an asynchronous check only when asked to. The synchronous
+// runner reports what it did not observe as unknown, never as a pass.
+
+test('the synchronous runner declares an asynchronous check unknown; the async runner observes it', async () => {
+  const later = probe({ id: 'later', point: 'behavior', applies: 'seed', summary: 's', check: async () => ({ ok: false, message: 'broken' }) });
+  const subjects = { seed: { namespace: {}, pkg: null } };
+  const sync = runProbe(later, subjects);
+  assert.equal(sync.status, 'unknown');
+  assert.match(sync.detail, /runProbeAsync/);
+  const awaited = await runProbeAsync(later, subjects);
+  assert.equal(awaited.status, 'fail');
+  assert.equal(awaited.detail, 'broken');
+  const rejecting = probe({ id: 'rejecting', point: 'behavior', applies: 'seed', summary: 's', check: async () => { throw new Error('boom'); } });
+  assert.equal(runProbe(rejecting, subjects).status, 'unknown');           // the dropped rejection is not unhandled
+  assert.match((await runProbeAsync(rejecting, subjects)).detail, /probe threw: boom/);
+  const grid = await familyGridAsync({ subjects, probes: [later, probe({ id: 'now', point: 'shape', applies: 'seed', summary: 's', check: pass })] });
+  assert.equal(grid.verdict, 'fail');
+  assert.equal(grid.bySubject.seed.points.behavior.fail, 1);
+  assert.equal(grid.bySubject.seed.points.shape.pass, 1);
+});
+
+function seedFixture030({ reruns = false, runsPastFailure = false, sameHolderReclaims = false, admitsDisabled = false } = {}) {
+  return {
+    VERSION: '0.3.0',
+    resumeSteps: async ({ steps, completed = [], execute }) => {
+      const outcomes = [];
+      let failed = false;
+      for (const step of steps) {
+        if (completed.includes(step.id) && !reruns) { outcomes.push({ id: step.id, outcome: 'skipped' }); continue; }
+        if (failed && !runsPastFailure) { outcomes.push({ id: step.id, outcome: 'not_reached' }); continue; }
+        const result = await execute(step);
+        if (result.ok) outcomes.push({ id: step.id, outcome: 'succeeded' });
+        else { failed = true; outcomes.push({ id: step.id, outcome: 'failed' }); }
+      }
+      return { status: failed ? 'failed' : 'complete', steps: outcomes };
+    },
+    claimLease: (current, { holder, ttlMs, now }) => {
+      const live = current && now < Date.parse(current.expiresAt);
+      if (live && !(sameHolderReclaims && current.holder === holder)) throw new Error('lease held');
+      return { leaseId: `l-${now}`, holder, acquiredAt: new Date(now).toISOString(), expiresAt: new Date(now + ttlMs).toISOString() };
+    },
+    admitCaller: (registry, { callerId, command }) => {
+      if (!registry?.callers || !registry?.commands) return { admitted: false, code: 'registry-unavailable' };
+      const caller = registry.callers.find((c) => c.id === callerId);
+      if (!caller) return { admitted: false, code: 'caller-unknown' };
+      if (!caller.enabled && !admitsDisabled) return { admitted: false, code: 'caller-disabled' };
+      const mapping = registry.commands.find((c) => c.command.join(' ') === command.join(' '));
+      if (!mapping) return { admitted: false, code: 'command-unmapped' };
+      if (!caller.allowedTools.includes(mapping.toolId)) return { admitted: false, code: 'tool-not-allowed' };
+      return { admitted: true, callerId, toolId: mapping.toolId };
+    },
+  };
+}
+
+const runSeed = (id, options) => runProbeAsync(byId(seedProbes, id), { seed: { namespace: seedFixture030(options), pkg: null } });
+
+test('the seed 0.3.0 probes pass a faithful fixture and fail each broken one', async () => {
+  for (const id of ['seed-resume-skips-and-stops', 'seed-lease-refuses-second-runner', 'seed-caller-admission-fails-closed']) {
+    const result = await runSeed(id);
+    assert.equal(result.status, 'pass', `${id}: ${result.detail}`);
+  }
+  assert.match((await runSeed('seed-resume-skips-and-stops', { reruns: true })).detail, /completed step ran again/);
+  assert.match((await runSeed('seed-resume-skips-and-stops', { runsPastFailure: true })).detail, /after the failure ran/);
+  assert.match((await runSeed('seed-lease-refuses-second-runner', { sameHolderReclaims: true })).detail, /second claim by "runner-a"/);
+  assert.match((await runSeed('seed-caller-admission-fails-closed', { admitsDisabled: true })).detail, /caller-disabled/);
+  const older = await runProbeAsync(byId(seedProbes, 'seed-resume-skips-and-stops'), { seed: { namespace: { VERSION: '0.2.0' }, pkg: null } });
+  assert.equal(older.status, 'unknown');
+});
+
+function capillaryFixture030({ fuses = false, servesMovedEpoch = false } = {}) {
+  const build = ({ items }) => ({
+    items: items.map((item) => {
+      if (Object.hasOwn(item, 'score') && !fuses) throw new Error('fused score');
+      return fuses
+        ? { id: item.id, score: item.relevance ?? item.recency ?? 0, relevance: item.relevance ?? 0, recency: item.recency ?? 0 }
+        : { id: item.id, relevance: item.relevance ?? null, recency: item.recency ?? null };
+    }),
+  });
+  return {
+    VERSION: '0.3.0',
+    buildContextPacket: build,
+    buildEpochGuardedPacket: async ({ readEpoch, read }) => {
+      const start = await readEpoch();
+      const rows = await read();
+      const end = await readEpoch();
+      if (start !== end && !servesMovedEpoch) return { refused: true, code: 'deletion-epoch-changed', epochStart: start, epochEnd: end };
+      return { ...build(rows), deletionEpoch: start };
+    },
+  };
+}
+
+test('the capillary 0.3.0 probes pass a faithful fixture and fail each broken one', async () => {
+  const run = (id, options) => runProbeAsync(byId(capillaryProbes, id), { capillary: { namespace: capillaryFixture030(options), pkg: null } });
+  assert.equal((await run('capillary-relevance-and-recency-separate')).status, 'pass');
+  assert.equal((await run('capillary-moved-epoch-refuses-packet')).status, 'pass');
+  assert.match((await run('capillary-relevance-and-recency-separate', { fuses: true })).detail, /merged or filled in/);
+  assert.match((await run('capillary-moved-epoch-refuses-packet', { servesMovedEpoch: true })).detail, /epoch moved under was served/);
+});
+
+function aestivationFixture040({ intentAddsTools = false, mutatesPlan = false, judgeMayApply = false } = {}) {
+  const real = new WeakSet();
+  const digestOf = (value) => JSON.stringify(value).length.toString(16).padStart(64, '0');
+  return {
+    VERSION: '0.4.0',
+    intentAssessment: (input) => {
+      if (!intentAddsTools && ('tools' in input || 'memoryWrites' in input)) throw new Error('grants nothing');
+      const record = Object.freeze({ label: input.label, needs: input.needs ?? [], tools: input.tools });
+      real.add(record);
+      return record;
+    },
+    admitWithIntent: (admission, assessment) => {
+      if (!intentAddsTools && !real.has(assessment)) throw new Error('not an assessment');
+      return {
+        allowedTools: [...admission.allowedTools, ...(intentAddsTools ? ['memory.note.write'] : [])],
+        memoryWrites: [...(admission.memoryWrites ?? [])],
+      };
+    },
+    planProposal: ({ id, objective, steps }) => ({ id, objective, steps, digest: digestOf({ id, objective, steps }) }),
+    verdictRecord: (input) => ({ reasons: [], ...input }),
+    correctPlan: ({ previous, verdict, author, steps }) => {
+      if (author === verdict.judge && !judgeMayApply) throw new Error('reviewer cannot apply');
+      if (mutatesPlan) previous.steps = steps;
+      const proposal = { id: previous.id, objective: previous.objective, steps, digest: digestOf({ steps }) };
+      return { proposal, correction: { previousDigest: previous.digest, digest: proposal.digest } };
+    },
+  };
+}
+
+test('the aestivation 0.4.0 probes pass a faithful fixture and fail each broken one', () => {
+  const run = (id, options) => runProbe(byId(aestivationProbes, id), { aestivation: { namespace: aestivationFixture040(options), pkg: null } });
+  assert.equal(run('aestivation-intent-grants-nothing').status, 'pass');
+  assert.equal(run('aestivation-correction-new-digest').status, 'pass');
+  assert.match(run('aestivation-intent-grants-nothing', { intentAddsTools: true }).detail, /carrying tools was accepted/);
+  assert.match(run('aestivation-correction-new-digest', { judgeMayApply: true }).detail, /judge applied its own/);
+  assert.match(run('aestivation-correction-new-digest', { mutatesPlan: true }).detail, /reviewed plan was mutated/);
+  const older = runProbe(byId(aestivationProbes, 'aestivation-correction-new-digest'), { aestivation: { namespace: { VERSION: '0.3.0' }, pkg: null } });
+  assert.equal(older.status, 'unknown');
 });
 
 test('the exported version matches the package', () => {

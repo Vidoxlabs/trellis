@@ -1,9 +1,9 @@
 // Trellis: the testing lattice. Pass, fail, unknown — fail outranks unknown,
 // unknown outranks pass, and health is a dated run, never a standing truth.
 
-export { POINTS, ProbeError, probe, probeList, runProbe } from './point.mjs';
+export { POINTS, ProbeError, probe, probeList, runProbe, runProbeAsync } from './point.mjs';
 export { verdict, rollup } from './score.mjs';
-export { familyGrid } from './grid.mjs';
+export { familyGrid, familyGridAsync } from './grid.mjs';
 export {
   FAMILY_MEMBERS,
   seedProbes,
@@ -15,7 +15,7 @@ export {
   defaultProbes,
 } from './probes.mjs';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 
 export function about() {
   const lines = [

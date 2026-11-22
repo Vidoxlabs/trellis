@@ -2,7 +2,7 @@
 // results up per subject and per point. The grid never loads a sibling;
 // absence is data, declared unknown.
 
-import { probeList, runProbe } from './point.mjs';
+import { probeList, runProbe, runProbeAsync } from './point.mjs';
 import { verdict, rollup } from './score.mjs';
 
 const POINT_ORDER = ['shape', 'behavior', 'consistency', 'operational'];
@@ -15,7 +15,19 @@ function emptyPoints() {
 
 export function familyGrid({ subjects = {}, probes = [] } = {}) {
   const list = probeList(probes);
-  const results = Object.freeze(list.map((aProbe) => runProbe(aProbe, subjects)));
+  return summarize(subjects, Object.freeze(list.map((aProbe) => runProbe(aProbe, subjects))));
+}
+
+// The same grid, awaiting each probe in list order, so an asynchronous check is
+// observed rather than declared unknown.
+export async function familyGridAsync({ subjects = {}, probes = [] } = {}) {
+  const list = probeList(probes);
+  const results = [];
+  for (const aProbe of list) results.push(await runProbeAsync(aProbe, subjects));
+  return summarize(subjects, Object.freeze(results));
+}
+
+function summarize(subjects, results) {
 
   // A probe may apply to a subject absent from the map: that is where its
   // declared unknown lives, so the bucket exists even though the checkout

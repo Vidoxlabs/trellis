@@ -47,48 +47,63 @@ export function probeList(probes = []) {
   return Object.freeze([...byId.values()]);
 }
 
-export function runProbe(aProbe, subjects) {
-  const subject = aProbe.applies === '*' ? subjects : (subjects[aProbe.applies] ?? null);
-  if (subject === null || subject === undefined) {
-    return Object.freeze({
-      id: aProbe.id,
-      applies: aProbe.applies,
-      point: aProbe.point,
-      subject: aProbe.applies,
-      status: 'unknown',
-      detail: 'checkout absent',
-    });
+const isThenable = (value) => value !== null
+  && (typeof value === 'object' || typeof value === 'function')
+  && typeof value.then === 'function';
+
+function result(aProbe, status, detail) {
+  return Object.freeze({
+    id: aProbe.id,
+    applies: aProbe.applies,
+    point: aProbe.point,
+    subject: aProbe.applies,
+    status,
+    detail,
+  });
+}
+
+function subjectFor(aProbe, subjects) {
+  return aProbe.applies === '*' ? subjects : (subjects[aProbe.applies] ?? null);
+}
+
+function settle(aProbe, verdict) {
+  if (verdict && verdict.unknown === true) {
+    return result(aProbe, 'unknown', verdict.message ?? 'probe declared unknown');
   }
+  const passed = Boolean(verdict && verdict.ok === true);
+  return result(aProbe, passed ? 'pass' : 'fail', verdict?.message ?? (passed ? 'ok' : 'check returned ok !== true'));
+}
+
+// Fail closed: a thrown probe is a failed probe, never a skipped one.
+const thrown = (aProbe, error) => result(aProbe, 'fail', `probe threw: ${error?.message ?? String(error)}`);
+
+/**
+ * Run one probe and wait for nothing. A check that returns a promise was not
+ * observed by this runner: the result is `unknown`, naming runProbeAsync, and the
+ * promise's outcome is dropped rather than guessed.
+ */
+export function runProbe(aProbe, subjects) {
+  const subject = subjectFor(aProbe, subjects);
+  if (subject === null || subject === undefined) return result(aProbe, 'unknown', 'checkout absent');
   try {
     const verdict = aProbe.check(subject, subjects);
-    if (verdict && verdict.unknown === true) {
-      return Object.freeze({
-        id: aProbe.id,
-        applies: aProbe.applies,
-        point: aProbe.point,
-        subject: aProbe.applies,
-        status: 'unknown',
-        detail: verdict.message ?? 'probe declared unknown',
-      });
+    if (isThenable(verdict)) {
+      Promise.resolve(verdict).catch(() => {});
+      return result(aProbe, 'unknown', 'the check is asynchronous; run it with runProbeAsync');
     }
-    const passed = Boolean(verdict && verdict.ok === true);
-    return Object.freeze({
-      id: aProbe.id,
-      applies: aProbe.applies,
-      point: aProbe.point,
-      subject: aProbe.applies,
-      status: passed ? 'pass' : 'fail',
-      detail: verdict?.message ?? (passed ? 'ok' : 'check returned ok !== true'),
-    });
+    return settle(aProbe, verdict);
   } catch (error) {
-    // Fail closed: a thrown probe is a failed probe, never a skipped one.
-    return Object.freeze({
-      id: aProbe.id,
-      applies: aProbe.applies,
-      point: aProbe.point,
-      subject: aProbe.applies,
-      status: 'fail',
-      detail: `probe threw: ${error.message}`,
-    });
+    return thrown(aProbe, error);
+  }
+}
+
+/** Run one probe and await its check. Same results as runProbe for a synchronous check. */
+export async function runProbeAsync(aProbe, subjects) {
+  const subject = subjectFor(aProbe, subjects);
+  if (subject === null || subject === undefined) return result(aProbe, 'unknown', 'checkout absent');
+  try {
+    return settle(aProbe, await aProbe.check(subject, subjects));
+  } catch (error) {
+    return thrown(aProbe, error);
   }
 }

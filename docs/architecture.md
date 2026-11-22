@@ -34,7 +34,7 @@ A subject is `{ namespace, pkg }` — a loaded module namespace and the parsed `
 
 ## The grid and the verdicts
 
-`familyGrid({ subjects, probes })` runs every probe whose subject is present, records one result per probe — pass, fail, or unknown, with a detail message — and rolls up a per-subject, per-point summary plus an overall verdict.
+`familyGrid({ subjects, probes })` (or `familyGridAsync`, which awaits asynchronous checks and is what the bundle runner uses) runs every probe whose subject is present, records one result per probe — pass, fail, or unknown, with a detail message — and rolls up a per-subject, per-point summary plus an overall verdict.
 
 The verdict math is a strictness order, not an average:
 

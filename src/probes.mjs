@@ -224,6 +224,80 @@ export const seedProbes = Object.freeze([
       return { ok: true, message: 'rollback posture defaults to unsupported; compensating tools must be registered' };
     }),
   }),
+  probe({
+    id: 'seed-resume-skips-and-stops',
+    point: 'behavior',
+    applies: 'seed',
+    summary: 'A resume does not run a step a previous attempt completed, and stops after the first failed step.',
+    check: since('0.3.0', 'step resume', async ({ namespace }) => {
+      const calls = [];
+      const run = await namespace.resumeSteps({
+        steps: [{ id: 'prepare' }, { id: 'apply' }, { id: 'verify' }],
+        completed: ['prepare'],
+        execute: async (step) => { calls.push(step.id); return { ok: step.id !== 'apply', detail: 'refused' }; },
+      });
+      if (calls.includes('prepare')) return { ok: false, message: 'a completed step ran again' };
+      if (calls.includes('verify')) return { ok: false, message: 'a step after the failure ran' };
+      const outcomes = run.steps.map((step) => step.outcome).join(',');
+      if (run.status !== 'failed' || outcomes !== 'skipped,failed,not_reached') {
+        return { ok: false, message: `resume reported ${run.status}: ${outcomes}` };
+      }
+      return { ok: true, message: 'completed steps carried, the run stopped at the failure' };
+    }),
+  }),
+  probe({
+    id: 'seed-lease-refuses-second-runner',
+    point: 'behavior',
+    applies: 'seed',
+    summary: 'A lease names its holder and expiry, refuses a second runner while live, and may be replaced once expired.',
+    check: since('0.3.0', 'run leases', ({ namespace }) => {
+      const t0 = Date.parse('2026-01-01T00:00:00.000Z');
+      const lease = namespace.claimLease(null, { holder: 'runner-a', ttlMs: 60_000, now: t0 });
+      if (lease.holder !== 'runner-a' || Date.parse(lease.expiresAt) !== t0 + 60_000) {
+        return { ok: false, message: `the lease did not record its holder and expiry: ${JSON.stringify(lease)}` };
+      }
+      for (const holder of ['runner-b', 'runner-a']) {
+        if (!rejects(() => namespace.claimLease(lease, { holder, ttlMs: 60_000, now: t0 + 1_000 }))) {
+          return { ok: false, message: `a live lease admitted a second claim by "${holder}"` };
+        }
+      }
+      const next = namespace.claimLease(lease, { holder: 'runner-b', ttlMs: 60_000, now: t0 + 60_000 });
+      if (next.holder !== 'runner-b') return { ok: false, message: 'an expired lease could not be replaced' };
+      return { ok: true, message: 'live leases refuse a second runner; expired ones are replaced' };
+    }),
+  }),
+  probe({
+    id: 'seed-caller-admission-fails-closed',
+    point: 'behavior',
+    applies: 'seed',
+    summary: 'Caller admission denies a missing registry, an unknown or disabled caller, and an unmapped command, and admits only a mapped tool on the caller\'s list.',
+    check: since('0.3.0', 'caller admission', ({ namespace }) => {
+      const registry = {
+        callers: [
+          { id: 'maintainer', enabled: true, allowedTools: ['docs.file.read'] },
+          { id: 'retired', enabled: false, allowedTools: ['docs.file.read'] },
+        ],
+        commands: [{ command: ['docs', 'read'], toolId: 'docs.file.read' }],
+      };
+      const cases = [
+        [undefined, { callerId: 'maintainer', command: ['docs', 'read'] }, 'registry-unavailable'],
+        [registry, { callerId: 'stranger', command: ['docs', 'read'] }, 'caller-unknown'],
+        [registry, { callerId: 'retired', command: ['docs', 'read'] }, 'caller-disabled'],
+        [registry, { callerId: 'maintainer', command: ['docs', 'purge'] }, 'command-unmapped'],
+      ];
+      for (const [given, call, code] of cases) {
+        const decision = namespace.admitCaller(given, call);
+        if (decision.admitted !== false || decision.code !== code) {
+          return { ok: false, message: `expected a ${code} denial, got ${JSON.stringify(decision)}` };
+        }
+      }
+      const admitted = namespace.admitCaller(registry, { callerId: 'maintainer', command: ['docs', 'read'] });
+      if (admitted.admitted !== true || admitted.toolId !== 'docs.file.read') {
+        return { ok: false, message: `a mapped, allowed call was not admitted: ${JSON.stringify(admitted)}` };
+      }
+      return { ok: true, message: 'admission denies four ways and admits a mapped, allowed tool' };
+    }),
+  }),
 ]);
 
 export const capillaryProbes = Object.freeze([
@@ -339,6 +413,55 @@ export const capillaryProbes = Object.freeze([
         return { ok: false, message: `the packet did not list the unknown source: ${JSON.stringify(packet.unknown)}` };
       }
       return { ok: true, message: 'unknown sources are recorded, kept out, and listed' };
+    }),
+  }),
+  probe({
+    id: 'capillary-relevance-and-recency-separate',
+    point: 'behavior',
+    applies: 'capillary',
+    summary: 'Packet items carry relevance and recency as separate fields, neither filled in from the other, and an item with a fused score is refused.',
+    check: since('0.3.0', 'separate ranking dimensions', ({ namespace }) => {
+      const digest = 'a'.repeat(64);
+      const packet = namespace.buildContextPacket({
+        items: [
+          { id: 'i-1', sourceId: 's', sourceDigest: digest, text: 'one', relevance: 0.9 },
+          { id: 'i-2', sourceId: 's', sourceDigest: digest, text: 'two', recency: 1_700_000_000_000 },
+        ],
+      });
+      const [first, second] = packet.items;
+      if (first.relevance !== 0.9 || first.recency !== null || second.relevance !== null || second.recency !== 1_700_000_000_000) {
+        return { ok: false, message: `the dimensions were merged or filled in: ${JSON.stringify(packet.items)}` };
+      }
+      if (packet.items.some((item) => Object.hasOwn(item, 'score'))) {
+        return { ok: false, message: 'a packet item carried a fused score' };
+      }
+      return expectThrow(
+        () => namespace.buildContextPacket({ items: [{ id: 'i-3', sourceId: 's', sourceDigest: digest, text: 'x', score: 0.5 }] }),
+        'item with a fused score',
+      );
+    }),
+  }),
+  probe({
+    id: 'capillary-moved-epoch-refuses-packet',
+    point: 'behavior',
+    applies: 'capillary',
+    summary: 'A packet is refused when the deletion epoch at the end of the read differs from the epoch at its start, and the refusal carries no items.',
+    check: since('0.3.0', 'deletion-epoch guard', async ({ namespace }) => {
+      const digest = 'a'.repeat(64);
+      const rows = async () => ({ items: [{ id: 'i-1', sourceId: 's', sourceDigest: digest, text: 'before the forget' }] });
+      let epoch = 3;
+      const moved = await namespace.buildEpochGuardedPacket({
+        readEpoch: async () => epoch,
+        read: async () => { const read = await rows(); epoch += 1; return read; },
+      });
+      if (moved.refused !== true || moved.code !== 'deletion-epoch-changed' || Object.hasOwn(moved, 'items')) {
+        return { ok: false, message: `a read the epoch moved under was served: ${JSON.stringify(moved)}` };
+      }
+      const stable = await namespace.buildEpochGuardedPacket({ readEpoch: async () => 4, read: rows });
+      if (stable.deletionEpoch !== 4 || stable.items?.length !== 1) {
+        return { ok: false, message: 'a read under a stable epoch was not served with its epoch' };
+      }
+      return { ok: true, message: 'a moved epoch refuses the packet; a stable one serves it' };
     }),
   }),
 ]);
@@ -640,6 +763,54 @@ export const aestivationProbes = Object.freeze([
         return { ok: false, message: `an approval of an earlier version opened the gate: ${JSON.stringify({ permitted: stale.permitted, held: stale.held })}` };
       }
       return { ok: true, message: 'an approval opens the gate only for the version it read' };
+    }),
+  }),
+  probe({
+    id: 'aestivation-intent-grants-nothing',
+    point: 'behavior',
+    applies: 'aestivation',
+    summary: 'An intent assessment that carries a tool or a memory write is refused, and composing a real one with an admission adds neither.',
+    check: since('0.4.0', 'read-only intent', ({ namespace }) => {
+      for (const field of ['tools', 'memoryWrites']) {
+        if (!rejects(() => namespace.intentAssessment({ label: 'x', [field]: ['docs.file.write'] }))) {
+          return { ok: false, message: `an assessment carrying ${field} was accepted` };
+        }
+      }
+      const assessment = namespace.intentAssessment({ label: 'recall', needs: ['durable-memory'] });
+      const composed = namespace.admitWithIntent({ allowedTools: ['docs.file.read'], memoryWrites: [] }, assessment);
+      if (JSON.stringify(composed.allowedTools) !== '["docs.file.read"]' || composed.memoryWrites.length !== 0) {
+        return { ok: false, message: `intent widened the admission: ${JSON.stringify(composed)}` };
+      }
+      if (!rejects(() => namespace.admitWithIntent({ allowedTools: [] }, { ...assessment, tools: ['docs.file.write'] }))) {
+        return { ok: false, message: 'a look-alike assessment composed with an admission' };
+      }
+      return { ok: true, message: 'intent is advisory: it adds no tool and no memory write' };
+    }),
+  }),
+  probe({
+    id: 'aestivation-correction-new-digest',
+    point: 'behavior',
+    applies: 'aestivation',
+    summary: 'A correction is a new proposal with a new digest, the reviewed plan is unchanged, and the judge who asked for the revision cannot apply it.',
+    check: since('0.4.0', 'plan corrections', ({ namespace }) => {
+      const previous = namespace.planProposal({
+        id: 'plan-1', objective: 'o',
+        steps: [{ stage: 'work', title: 'Draft' }, { stage: 'review', title: 'Review' }],
+      });
+      const before = JSON.stringify(previous);
+      const verdict = namespace.verdictRecord({
+        planId: 'plan-1', planDigest: previous.digest, decision: 'revise', judge: 'reviewer', reasons: ['verify it'],
+      });
+      const steps = [...previous.steps, { stage: 'verify', title: 'Verify' }];
+      if (!rejects(() => namespace.correctPlan({ previous, verdict, author: 'reviewer', steps }))) {
+        return { ok: false, message: 'the judge applied its own requested patch' };
+      }
+      const { proposal, correction } = namespace.correctPlan({ previous, verdict, author: 'implementer', steps });
+      if (JSON.stringify(previous) !== before) return { ok: false, message: 'the reviewed plan was mutated' };
+      if (proposal.digest === previous.digest || correction.previousDigest !== previous.digest || correction.digest !== proposal.digest) {
+        return { ok: false, message: `the correction did not store a new, linked digest: ${JSON.stringify(correction)}` };
+      }
+      return { ok: true, message: 'corrections mint a new digest; the judge does not apply its own patch' };
     }),
   }),
 ]);
