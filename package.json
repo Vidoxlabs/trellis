@@ -1,0 +1,27 @@
+{
+  "name": "@vidoxlabs/trellis",
+  "version": "0.1.0",
+  "description": "The testing lattice: multi-point probes that keep the bloom agent family honest — shape, behavior, consistency, operational.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test \"test/*.test.mjs\"",
+    "family": "node scripts/family.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "keywords": [
+    "testing",
+    "agent",
+    "verification",
+    "probes",
+    "local-first"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Vidoxlabs/trellis.git"
+  }
+}
