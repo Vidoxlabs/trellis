@@ -804,6 +804,133 @@ test('the consent probe supplies valid personal metadata to myosotis 1.0.0', () 
   assert.equal(result.status, 'pass', result.detail);
 });
 
+// Seed 0.7.0 aborts before execute for its four abort codes, and an abort is not a dry run.
+const ABORT_CODES_070 = ['operator-abort', 'lease-expired', 'policy-revoked', 'max-attempts-exceeded'];
+
+function seedFixture070({ abortRunsSteps = false, abortsDryRun = false, codes = ABORT_CODES_070 } = {}) {
+  const previous = seedFixture030();
+  return {
+    ...previous,
+    VERSION: '0.7.0',
+    resumeSteps: async (input) => {
+      const { steps, completed = [], abort, dryRun = false } = input;
+      if (abort === undefined || abortRunsSteps) return previous.resumeSteps(input);
+      if (!codes.includes(abort)) throw new Error('abort must be a known code');
+      if (dryRun && !abortsDryRun) throw new Error('abort and dryRun cannot be combined');
+      return {
+        status: 'aborted',
+        abortCode: abort,
+        completed: [...completed],
+        steps: steps.map((step) => ({ id: step.id, outcome: completed.includes(step.id) ? 'skipped' : 'not_reached' })),
+      };
+    },
+  };
+}
+
+test('the seed 0.7.0 abort probe passes a faithful fixture and fails each broken one', async () => {
+  const p = byId(seedProbes, 'seed-abort-skips-execution');
+  const run = (options) => runProbeAsync(p, { seed: { namespace: seedFixture070(options), pkg: null } });
+  const faithful = await run();
+  assert.equal(faithful.status, 'pass', faithful.detail);
+  assert.match((await run({ abortRunsSteps: true })).detail, /aborted run \(operator-abort\) called execute/);
+  assert.match((await run({ abortsDryRun: true })).detail, /abort together with a dry run was accepted/);
+  const short = await run({ codes: ABORT_CODES_070.slice(0, 3) });
+  assert.equal(short.status, 'fail');
+  assert.match(short.detail, /max-attempts-exceeded was refused/);  // the probe holds its own list of codes
+});
+
+// Drosera 2.1.0 leaves a notice for review → promoted and for a move to deprecated.
+function skillSubject210({ noticeForAnyPair = false, dropsApprover = false } = {}) {
+  const previous = skillSubject200().namespace;
+  return {
+    namespace: {
+      ...previous,
+      VERSION: '2.1.0',
+      transitionSkill: (record, to, { approver, reason } = {}) => Object.freeze({
+        ...previous.transitionSkill(record, to),
+        ...(to === 'promoted' ? { promotedBy: approver } : {}),
+        ...(to === 'deprecated' ? { deprecatedReason: reason } : {}),
+      }),
+      lifecycleNotice: (before, after) => {
+        if (before.lifecycle === 'review' && after.lifecycle === 'promoted') {
+          return Object.freeze({ name: after.name, from: 'review', to: 'promoted', ...(dropsApprover ? {} : { approver: after.promotedBy }) });
+        }
+        if (after.lifecycle === 'deprecated' && before.lifecycle !== 'deprecated') {
+          return Object.freeze({ name: after.name, from: before.lifecycle, to: 'deprecated', reason: after.deprecatedReason });
+        }
+        if (noticeForAnyPair) return Object.freeze({ name: after.name, from: before.lifecycle, to: after.lifecycle });
+        throw new Error('not a lifecycle notice');
+      },
+    },
+    pkg: null,
+  };
+}
+
+test('the drosera 2.1.0 notice probe passes a faithful fixture and fails each broken one', () => {
+  const p = byId(droseraProbes, 'drosera-lifecycle-notice-names-its-move');
+  const faithful = runProbe(p, { drosera: skillSubject210() });
+  assert.equal(faithful.status, 'pass', faithful.detail);
+  assert.match(runProbe(p, { drosera: skillSubject210({ noticeForAnyPair: true }) }).detail, /draft to review move produced a lifecycle notice/);
+  assert.match(runProbe(p, { drosera: skillSubject210({ dropsApprover: true }) }).detail, /promotion notice did not name its approver/);
+  for (const id of ['drosera-skill-record-and-lifecycle', 'drosera-catalog-public-skills']) {
+    const result = runProbe(byId(droseraProbes, id), { drosera: skillSubject210() });
+    assert.equal(result.status, 'pass', `${id}: ${result.detail}`);
+  }
+});
+
+// Drosera 2.2.0 reads a skill document's text and refuses one missing a required heading.
+const SKILL_HEADINGS_220 = [
+  'Summary', 'When to Use (Triggers)', 'Inputs', 'Outputs', 'Procedure / Steps',
+  'Guardrails', 'Examples', 'Verification', 'Sources / Evidence',
+];
+
+function skillSubject220({ acceptsMissing = null, skipsSkill = false } = {}) {
+  const previous = skillSubject210().namespace;
+  const LIST_OF = {
+    'When to Use (Triggers)': 'triggers', Inputs: 'inputs', Outputs: 'outputs', 'Procedure / Steps': 'procedure',
+    Guardrails: 'guardrails', Examples: 'examples', Verification: 'verification', 'Sources / Evidence': 'sources',
+  };
+  return {
+    namespace: {
+      ...previous,
+      VERSION: '2.2.0',
+      skillFromMarkdown: (text) => {
+        const sections = new Map();
+        let current = null;
+        for (const line of text.split('\n')) {
+          const heading = /^##? (.+)$/.exec(line);
+          if (heading) { current = heading[1]; sections.set(current, []); continue; }
+          const item = /^- (.+)$/.exec(line);
+          if (item && current) sections.get(current).push(item[1]);
+        }
+        for (const heading of SKILL_HEADINGS_220) {
+          if (heading !== acceptsMissing && !(sections.get(heading)?.length > 0)) throw new Error(`missing heading "${heading}"`);
+        }
+        const input = {
+          name: /^name: (.+)$/m.exec(text)?.[1],
+          summary: /^description: (.+)$/m.exec(text)?.[1],
+          ...Object.fromEntries(Object.entries(LIST_OF).map(([heading, field]) => [field, sections.get(heading) ?? ['filled in']])),
+        };
+        if (skipsSkill) return Object.freeze({ name: input.name, summary: input.summary, lifecycle: 'draft', sources: input.sources });
+        return previous.skill(input);
+      },
+    },
+    pkg: null,
+  };
+}
+
+test('the drosera 2.2.0 document probe passes a faithful fixture and fails one that accepts a missing heading', () => {
+  const p = byId(droseraProbes, 'drosera-skill-document-needs-every-heading');
+  const faithful = runProbe(p, { drosera: skillSubject220() });
+  assert.equal(faithful.status, 'pass', faithful.detail);
+  for (const heading of ['Summary', 'Inputs', 'Sources / Evidence']) {
+    const result = runProbe(p, { drosera: skillSubject220({ acceptsMissing: heading }) });
+    assert.equal(result.status, 'fail');
+    assert.ok(result.detail.includes(`without "${heading}" was accepted`), result.detail);
+  }
+  assert.match(runProbe(p, { drosera: skillSubject220({ skipsSkill: true }) }).detail, /does not pass skill\(\)/);
+});
+
 const followUpProbes = [
   ['seed', 'seed-dry-run-skips-execution', '0.5.0', '0.4.0', seedFixture030(), /dry run called execute/],
   ['capillary', 'capillary-recorded-evidence-required', '1.0.0', '0.3.0', {
@@ -849,6 +976,11 @@ const followUpProbes = [
     ...skillSubject040().namespace,
     skillCatalog: entries => ({ list: () => entries.map(entry => ({ ...entry, slug: entry.skill.name })) }),
   }, /catalog listed a skill outside its public rule/],
+  ['seed', 'seed-abort-skips-execution', '0.7.0', '0.6.0', seedFixture030(), /aborted run \(operator-abort\) called execute/],
+  ['drosera', 'drosera-lifecycle-notice-names-its-move', '2.1.0', '2.0.0',
+    skillSubject210({ noticeForAnyPair: true }).namespace, /draft to review move produced a lifecycle notice/],
+  ['drosera', 'drosera-skill-document-needs-every-heading', '2.2.0', '2.1.0',
+    skillSubject220({ acceptsMissing: 'Guardrails' }).namespace, /without "Guardrails" was accepted/],
 ];
 
 for (const [subject, id, version, earlier, broken, detail] of followUpProbes) {

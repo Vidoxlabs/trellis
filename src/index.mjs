@@ -15,7 +15,7 @@ export {
   defaultProbes,
 } from './probes.mjs';
 
-export const VERSION = '0.6.2';
+export const VERSION = '0.7.0';
 
 export function about() {
   const lines = [

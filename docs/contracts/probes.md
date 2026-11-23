@@ -50,6 +50,22 @@ An `unknown` is declared with its reason, carried to the verdict math, and never
 
 ## Changes
 
+- `0.7.0` — three versioned behavior probes check the following contracts.
+  - Seed `0.7.0` stops a resume before `execute` for each of the four abort codes,
+    reports `aborted` with the code, keeps completed steps `skipped` and the rest
+    `not_reached`, and refuses an abort together with a dry run
+    (`seed-abort-skips-execution`). The probe holds the four codes itself.
+  - Drosera `2.1.0` leaves a notice naming the approver for a review to promoted
+    move and the reason for a move to deprecated, and refuses a draft to review
+    pair (`drosera-lifecycle-notice-names-its-move`).
+  - Drosera `2.2.0` reads a skill document with all nine required headings into a
+    draft record that `skill()` accepts, and refuses a document missing any one of
+    them (`drosera-skill-document-needs-every-heading`). The probe holds the nine
+    headings itself.
+
+  A checkout older than each version reads `unknown` for that probe. No existing
+  probe changed, and no sibling was loosened.
+
 - `0.6.2` — probe fix for drosera `2.0.0`, which promotes a skill only through
   `review` and lists five lifecycle states. For a drosera checkout at `2.0.0` or
   later, the probes move a draft to `review` before promoting it, and

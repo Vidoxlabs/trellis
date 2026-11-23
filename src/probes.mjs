@@ -134,6 +134,41 @@ function rejects(fn) {
   }
 }
 
+async function rejectsAsync(fn) {
+  try {
+    await fn();
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+// Same keys, same values. Key order is not part of a contract.
+function sameRecord(actual, expected) {
+  if (actual === null || typeof actual !== 'object') return false;
+  const keys = Object.keys(actual).sort();
+  return JSON.stringify(keys) === JSON.stringify(Object.keys(expected).sort())
+    && keys.every((key) => actual[key] === expected[key]);
+}
+
+// The four abort codes seed 0.7.0 names. The probe holds its own copy, so a seed
+// that drops a code from both its list and its check still fails.
+const ABORT_CODES_070 = Object.freeze(['operator-abort', 'lease-expired', 'policy-revoked', 'max-attempts-exceeded']);
+
+// The nine headings drosera 2.2.0 requires in a skill document, held here for the
+// same reason.
+const SKILL_HEADINGS_220 = Object.freeze([
+  'Summary', 'When to Use (Triggers)', 'Inputs', 'Outputs', 'Procedure / Steps',
+  'Guardrails', 'Examples', 'Verification', 'Sources / Evidence',
+]);
+
+function skillDocument(headings) {
+  return [
+    '---', 'name: scoped-review', 'description: Review a change against its admitted scope.', '---', '',
+    ...headings.flatMap((heading) => [`## ${heading}`, '', `- ${heading} item.`, '']),
+  ].join('\n');
+}
+
 export const FAMILY_MEMBERS = Object.freeze([
   'seed', 'capillary', 'myosotis', 'aestivation', 'drosera',
 ]);
@@ -344,6 +379,35 @@ export const seedProbes = Object.freeze([
         return { ok: false, message: 'a dry run executed a step or added a failure class' };
       }
       return { ok: true, message: 'unknown classes fail, known classes stay, dry runs add none' };
+    }),
+  }),
+  probe({
+    id: 'seed-abort-skips-execution',
+    point: 'behavior',
+    applies: 'seed',
+    summary: 'Each of the four abort codes returns status aborted with its code, keeps completed steps skipped and the rest not reached, and never calls execute. An abort together with a dry run is refused.',
+    check: since('0.7.0', 'step aborts', async ({ namespace }) => {
+      const steps = [{ id: 'prepare' }, { id: 'apply' }, { id: 'verify' }];
+      let calls = 0;
+      const execute = async () => { calls += 1; return { ok: true }; };
+      for (const code of ABORT_CODES_070) {
+        let run;
+        try {
+          run = await namespace.resumeSteps({ steps, completed: ['prepare'], abort: code, execute });
+        } catch (error) {
+          return { ok: false, message: `an abort with ${code} was refused: ${error.message}` };
+        }
+        if (calls !== 0) return { ok: false, message: `an aborted run (${code}) called execute` };
+        const outcomes = run?.steps?.map((step) => step.outcome).join(',');
+        if (run?.status !== 'aborted' || run.abortCode !== code || outcomes !== 'skipped,not_reached,not_reached') {
+          return { ok: false, message: `an abort with ${code} reported ${run?.status} (${run?.abortCode}): ${outcomes}` };
+        }
+      }
+      if (!(await rejectsAsync(() => namespace.resumeSteps({ steps, abort: 'operator-abort', dryRun: true, execute })))) {
+        return { ok: false, message: 'an abort together with a dry run was accepted' };
+      }
+      if (calls !== 0) return { ok: false, message: 'a refused abort called execute' };
+      return { ok: true, message: 'the four abort codes stop before execute; an abort is not a dry run' };
     }),
   }),
   probe({
@@ -1377,6 +1441,53 @@ export const droseraProbes = Object.freeze([
         }
       }
       return { ok: true, message: 'only promoted MIT skills list or read as public' };
+    }),
+  }),
+  probe({
+    id: 'drosera-lifecycle-notice-names-its-move',
+    point: 'behavior',
+    applies: 'drosera',
+    summary: 'A review to promoted move leaves a notice naming its approver, a move to deprecated leaves one stating its reason, and a draft to review move is not a notice.',
+    check: since('2.1.0', 'lifecycle notices', ({ namespace }) => {
+      const name = 'scoped-review';
+      const draft = namespace.skill(skillInput(namespace, { name, summary: 'Review a change against its admitted scope.' }));
+      const review = namespace.transitionSkill(draft, 'review');
+      const promoted = namespace.transitionSkill(review, 'promoted', { approver: 'reviewer' });
+      const retired = namespace.transitionSkill(promoted, 'deprecated', { reason: 'Replaced.' });
+      const promotion = namespace.lifecycleNotice(review, promoted);
+      if (!sameRecord(promotion, { name, from: 'review', to: 'promoted', approver: 'reviewer' })) {
+        return { ok: false, message: `the promotion notice did not name its approver: ${JSON.stringify(promotion)}` };
+      }
+      const deprecation = namespace.lifecycleNotice(promoted, retired);
+      if (!sameRecord(deprecation, { name, from: 'promoted', to: 'deprecated', reason: 'Replaced.' })) {
+        return { ok: false, message: `the deprecation notice did not state its reason: ${JSON.stringify(deprecation)}` };
+      }
+      if (!rejects(() => namespace.lifecycleNotice(draft, review))) {
+        return { ok: false, message: 'a draft to review move produced a lifecycle notice' };
+      }
+      return { ok: true, message: 'promotion names its approver, deprecation its reason; other moves are not notices' };
+    }),
+  }),
+  probe({
+    id: 'drosera-skill-document-needs-every-heading',
+    point: 'behavior',
+    applies: 'drosera',
+    summary: 'A skill document with all nine required headings reads into a draft record that skill() accepts, and a document missing any one of them is refused.',
+    check: since('2.2.0', 'skill documents', ({ namespace }) => {
+      const record = namespace.skillFromMarkdown(skillDocument(SKILL_HEADINGS_220));
+      if (record?.name !== 'scoped-review' || record.lifecycle !== 'draft' || record.sources?.[0] !== 'Sources / Evidence item.') {
+        return { ok: false, message: `a complete skill document did not read into a draft skill record: ${JSON.stringify(record)}` };
+      }
+      if (rejects(() => namespace.skill(record))) {
+        return { ok: false, message: 'the record read from a document does not pass skill()' };
+      }
+      for (const heading of SKILL_HEADINGS_220) {
+        const missing = skillDocument(SKILL_HEADINGS_220.filter((item) => item !== heading));
+        if (!rejects(() => namespace.skillFromMarkdown(missing))) {
+          return { ok: false, message: `a skill document without "${heading}" was accepted` };
+        }
+      }
+      return { ok: true, message: 'a complete document reads into a draft; each missing heading is refused' };
     }),
   }),
 ]);

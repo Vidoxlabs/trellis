@@ -10,7 +10,7 @@ A trellis is the lattice a garden grows against. Climbing plants grip a lattice 
 
 ## Status
 
-Version 0.6.2. The probe, grid, and verdict engine is `implemented` as a tested reference library. Family health statements live in `docs/evidence/` as dated observed runs. The engine covers the family's module repositories. The harness and design canon keep their own checks.
+Version 0.7.0. The probe, grid, and verdict engine is `implemented` as a tested reference library. Family health statements live in `docs/evidence/` as dated observed runs. The engine covers the family's module repositories. The harness and design canon keep their own checks.
 
 ## Install
 
