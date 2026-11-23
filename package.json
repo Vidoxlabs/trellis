@@ -1,6 +1,6 @@
 {
   "name": "@vidoxlabs/trellis",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Multi-point testing for the agent family: shape, behavior, consistency, operational.",
   "type": "module",
   "main": "src/index.mjs",

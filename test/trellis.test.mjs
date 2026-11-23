@@ -839,6 +839,72 @@ test('the seed 0.7.0 abort probe passes a faithful fixture and fails each broken
   assert.match(short.detail, /max-attempts-exceeded was refused/);  // the probe holds its own list of codes
 });
 
+// Seed 0.8.0 checks agents and tools documents the caller already parsed. A null
+// document is named in missing, and an agent that names an unlisted tool is an error.
+function seedFixture080({
+  missingAs = 'agents', pathInMissing = false, missingOk = false, unknownPasses = false,
+  flagsKnown = false, unknownOk = false, mutates = false, grants = false,
+} = {}) {
+  return {
+    ...seedFixture070(),
+    VERSION: '0.8.0',
+    checkRegistryDocuments: ({ agents, tools }) => {
+      const missing = [];
+      if (agents === null) missing.push(missingAs);
+      if (agents === null && pathInMissing) missing.push('registries/agents.yaml');
+      if (tools === null) missing.push('tools');
+      const listed = new Set((tools?.tools ?? []).map((tool) => tool.id));
+      const errors = [];
+      const granted = [];
+      for (const agent of agents?.agents ?? []) {
+        for (const name of agent.allowedTools ?? []) {
+          const unknown = !listed.has(name);
+          if ((unknown && !unknownPasses) || (!unknown && flagsKnown)) errors.push(`agents.${agent.id}: references unknown tool "${name}".`);
+          if (unknown) granted.push(name);
+        }
+        if (mutates) agent.allowedTools = agent.allowedTools.filter((name) => listed.has(name));
+      }
+      const result = { ok: errors.length === 0 && missing.length === 0, missing, errors };
+      if (missingOk && agents === null) result.ok = true;
+      if (unknownOk && agents !== null) result.ok = true;
+      if (grants) result.granted = granted;
+      return result;
+    },
+  };
+}
+
+test('the seed 0.8.0 registry-document probe passes a faithful fixture and fails each broken one', () => {
+  const p = byId(seedProbes, 'seed-registry-documents-fail-closed');
+  assert.ok(p, 'missing probe seed-registry-documents-fail-closed');
+  const run = (options) => runProbe(p, { seed: { namespace: seedFixture080(options), pkg: null } });
+  const faithful = run();
+  assert.equal(faithful.status, 'pass', faithful.detail);
+  for (const [options, detail] of [
+    [{ missingAs: 'registries/agents.yaml' }, /null agents document was not named agents in missing/],
+    [{ pathInMissing: true }, /missing carries a path/],
+    [{ missingOk: true }, /null agents document left ok true/],
+    [{ unknownPasses: true }, /unknown tool "docs\.file\.purge" was not an error/],
+    [{ flagsKnown: true }, /listed tool "docs\.file\.read" was reported as an error/],
+    [{ unknownOk: true }, /unknown tool left ok true/],
+    [{ mutates: true }, /changed the documents it was given/],
+    [{ grants: true }, /carries the unknown tool outside its errors: granted/],
+  ]) {
+    const result = run(options);
+    assert.equal(result.status, 'fail', JSON.stringify(options));
+    assert.match(result.detail, detail);
+  }
+  const noExport = runProbe(p, { seed: { namespace: { ...seedFixture070(), VERSION: '0.8.0' }, pkg: null } });
+  assert.equal(noExport.status, 'fail');
+  assert.match(noExport.detail, /missing exports: checkRegistryDocuments/);
+});
+
+test('the probe module imports only the engine and reads no file', () => {
+  const source = readFileSync(new URL('../src/probes.mjs', import.meta.url), 'utf8');
+  const imports = source.match(/^import .* from '([^']+)';$/gm) ?? [];
+  assert.deepEqual(imports, ["import { probe } from './point.mjs';"]);
+  assert.doesNotMatch(source, /node:|readFile|readdir|opendir|require\(|fetch\(/);
+});
+
 // Drosera 2.1.0 leaves a notice for review → promoted and for a move to deprecated.
 function skillSubject210({ noticeForAnyPair = false, dropsApprover = false } = {}) {
   const previous = skillSubject200().namespace;
@@ -981,6 +1047,8 @@ const followUpProbes = [
     skillSubject210({ noticeForAnyPair: true }).namespace, /draft to review move produced a lifecycle notice/],
   ['drosera', 'drosera-skill-document-needs-every-heading', '2.2.0', '2.1.0',
     skillSubject220({ acceptsMissing: 'Guardrails' }).namespace, /without "Guardrails" was accepted/],
+  ['seed', 'seed-registry-documents-fail-closed', '0.8.0', '0.7.0',
+    seedFixture080({ unknownPasses: true }), /unknown tool "docs\.file\.purge" was not an error/],
 ];
 
 for (const [subject, id, version, earlier, broken, detail] of followUpProbes) {

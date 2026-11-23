@@ -50,6 +50,16 @@ An `unknown` is declared with its reason, carried to the verdict math, and never
 
 ## Changes
 
+- `0.8.0` — one versioned behavior probe checks seed `0.8.0`'s registry-document
+  check (`seed-registry-documents-fail-closed`). The probe passes documents held in
+  memory and reads no file. A `null` agents document must be named `agents` in
+  `missing`, and no entry in `missing` may contain a `/`. An agent whose
+  `allowedTools` names a tool the tools document does not list must be an error,
+  and a listed tool must not be. `ok` must be false in both cases. The check must
+  leave the documents unchanged, and the unknown tool must appear in the result
+  only as an error, so the result grants nothing. A seed checkout older than
+  `0.8.0` reads `unknown`. No existing probe changed, and seed was not edited.
+
 - `0.7.0` — three versioned behavior probes check the following contracts.
   - Seed `0.7.0` stops a resume before `execute` for each of the four abort codes,
     reports `aborted` with the code, keeps completed steps `skipped` and the rest

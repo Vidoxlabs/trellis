@@ -411,6 +411,46 @@ export const seedProbes = Object.freeze([
     }),
   }),
   probe({
+    id: 'seed-registry-documents-fail-closed',
+    point: 'behavior',
+    applies: 'seed',
+    summary: 'A null agents document is named agents in missing, with no path, and an agent that names a tool the tools document does not list is an error. ok is false in both, the documents are unchanged, and the unknown tool appears in the result only as an error.',
+    check: since('0.8.0', 'registry documents', ({ namespace }) => {
+      const exports = requireExports(namespace, ['checkRegistryDocuments']);
+      if (!exports.ok) return exports;
+      // Documents held in memory, as a caller that already parsed them would pass them.
+      const tools = () => ({ tools: [{ id: 'docs.file.read' }, { id: 'docs.file.list' }] });
+      const absent = namespace.checkRegistryDocuments({ agents: null, tools: tools() });
+      if (!Array.isArray(absent?.missing) || !absent.missing.includes('agents')) {
+        return { ok: false, message: `a null agents document was not named agents in missing: ${JSON.stringify(absent?.missing)}` };
+      }
+      if (absent.missing.some((name) => typeof name !== 'string' || name.includes('/'))) {
+        return { ok: false, message: `missing carries a path: ${JSON.stringify(absent.missing)}` };
+      }
+      if (absent.ok !== false) return { ok: false, message: `a null agents document left ok ${absent.ok}` };
+      const agents = { agents: [{ id: 'maintainer', allowedTools: ['docs.file.read', 'docs.file.purge'] }] };
+      const given = tools();
+      const before = JSON.stringify([agents, given]);
+      const checked = namespace.checkRegistryDocuments({ agents, tools: given });
+      const errors = Array.isArray(checked?.errors) ? checked.errors : [];
+      if (!errors.some((error) => typeof error === 'string' && error.includes('docs.file.purge'))) {
+        return { ok: false, message: 'an unknown tool "docs.file.purge" was not an error' };
+      }
+      if (errors.some((error) => typeof error === 'string' && error.includes('docs.file.read'))) {
+        return { ok: false, message: 'the listed tool "docs.file.read" was reported as an error' };
+      }
+      if (checked.ok !== false) return { ok: false, message: `an unknown tool left ok ${checked.ok}` };
+      if (JSON.stringify([agents, given]) !== before) {
+        return { ok: false, message: 'the check changed the documents it was given' };
+      }
+      const { errors: _errors, ...rest } = checked;
+      if (JSON.stringify(rest).includes('docs.file.purge')) {
+        return { ok: false, message: `the result carries the unknown tool outside its errors: ${Object.keys(rest).filter((key) => JSON.stringify(rest[key]).includes('docs.file.purge')).join(', ')}` };
+      }
+      return { ok: true, message: 'a null agents document is named with no path; an unknown tool is an error; ok is false; nothing is granted' };
+    }),
+  }),
+  probe({
     id: 'seed-lease-refuses-second-runner',
     point: 'behavior',
     applies: 'seed',
