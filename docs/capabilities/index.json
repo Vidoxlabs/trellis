@@ -12,13 +12,16 @@
         {
           "id": "CAP-01.7",
           "title": "Trellis capability docs and ledger entries",
+          "milestone": "M0",
           "status": "in-progress"
         }
       ],
       "toolIds": [],
       "contracts": [],
       "tests": [],
-      "prs": [],
+      "prs": [
+        "trellis#1"
+      ],
       "commits": [],
       "adr": [],
       "decision": null,
@@ -34,6 +37,7 @@
         {
           "id": "CAP-02.7",
           "title": "Self-test test/capabilities.test.mjs in trellis",
+          "milestone": "M2",
           "status": "proposed"
         }
       ],
@@ -56,6 +60,7 @@
         {
           "id": "CAP-05.7",
           "title": "Packer behavior and determinism probes",
+          "milestone": "M3",
           "status": "proposed"
         }
       ],
@@ -80,6 +85,7 @@
         {
           "id": "CAP-13.3",
           "title": "Store conformance probes against seed reference",
+          "milestone": "M7",
           "status": "proposed"
         }
       ],
@@ -104,6 +110,7 @@
         {
           "id": "CAP-14.4",
           "title": "Eval harness consistency and determinism probes",
+          "milestone": "M8",
           "status": "proposed"
         }
       ],
@@ -128,6 +135,7 @@
         {
           "id": "CAP-16.2",
           "title": "Provider conformance probes over injected adapters",
+          "milestone": "M4",
           "status": "proposed"
         }
       ],
@@ -152,6 +160,7 @@
         {
           "id": "CAP-19.2",
           "title": "Skill safety scan behavior probes",
+          "milestone": "M9",
           "status": "proposed"
         }
       ],

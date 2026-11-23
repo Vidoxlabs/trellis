@@ -6,4 +6,4 @@ Earlier contract and release history for `trellis` lives in the `Changes` sectio
 
 ### Added
 
-- Capability ledger scaffold (`docs/capabilities/index.json`), capability guide, ADR index (`docs/adr/README.md`), and changelog convention (`CAP-01`).
+- Capability ledger scaffold (`docs/capabilities/index.json`), capability guide, ADR index (`docs/adr/README.md`), and changelog convention (CAP-01, trellis#1).
