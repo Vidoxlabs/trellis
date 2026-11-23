@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "repo": "trellis",
+  "entries": [
+    {
+      "id": "CAP-01",
+      "role": "touches",
+      "status": "in-progress",
+      "claim": "planned",
+      "spec": "docs/docs/capabilities/CAP-01-development-timeline-ledger.md",
+      "slices": [
+        {
+          "id": "CAP-01.7",
+          "title": "Trellis capability docs and ledger entries",
+          "status": "in-progress"
+        }
+      ],
+      "toolIds": [],
+      "contracts": [],
+      "tests": [],
+      "prs": [],
+      "commits": [],
+      "adr": [],
+      "decision": null,
+      "updated": "2026-11-23"
+    },
+    {
+      "id": "CAP-02",
+      "role": "touches",
+      "status": "proposed",
+      "claim": "planned",
+      "spec": "docs/docs/capabilities/CAP-02-docs-freshness-check.md",
+      "slices": [
+        {
+          "id": "CAP-02.7",
+          "title": "Self-test test/capabilities.test.mjs in trellis",
+          "status": "proposed"
+        }
+      ],
+      "toolIds": [],
+      "contracts": [],
+      "tests": [],
+      "prs": [],
+      "commits": [],
+      "adr": [],
+      "decision": null,
+      "updated": "2026-11-23"
+    },
+    {
+      "id": "CAP-05",
+      "role": "touches",
+      "status": "proposed",
+      "claim": "planned",
+      "spec": "capillary/docs/capabilities/CAP-05-codebase-context-packer.md",
+      "slices": [
+        {
+          "id": "CAP-05.7",
+          "title": "Packer behavior and determinism probes",
+          "status": "proposed"
+        }
+      ],
+      "toolIds": [],
+      "contracts": [
+        "docs/contracts/probes.md"
+      ],
+      "tests": [],
+      "prs": [],
+      "commits": [],
+      "adr": [],
+      "decision": null,
+      "updated": "2026-11-23"
+    },
+    {
+      "id": "CAP-13",
+      "role": "touches",
+      "status": "proposed",
+      "claim": "planned",
+      "spec": "seed/docs/capabilities/CAP-13-durable-run-store-conformance.md",
+      "slices": [
+        {
+          "id": "CAP-13.3",
+          "title": "Store conformance probes against seed reference",
+          "status": "proposed"
+        }
+      ],
+      "toolIds": [],
+      "contracts": [
+        "docs/contracts/probes.md"
+      ],
+      "tests": [],
+      "prs": [],
+      "commits": [],
+      "adr": [],
+      "decision": null,
+      "updated": "2026-11-23"
+    },
+    {
+      "id": "CAP-14",
+      "role": "touches",
+      "status": "proposed",
+      "claim": "planned",
+      "spec": "bloom/docs/capabilities/CAP-14-eval-harness.md",
+      "slices": [
+        {
+          "id": "CAP-14.4",
+          "title": "Eval harness consistency and determinism probes",
+          "status": "proposed"
+        }
+      ],
+      "toolIds": [],
+      "contracts": [
+        "docs/contracts/probes.md"
+      ],
+      "tests": [],
+      "prs": [],
+      "commits": [],
+      "adr": [],
+      "decision": null,
+      "updated": "2026-11-23"
+    },
+    {
+      "id": "CAP-16",
+      "role": "touches",
+      "status": "proposed",
+      "claim": "planned",
+      "spec": "seed/docs/capabilities/CAP-16-provider-conformance-model-profiles.md",
+      "slices": [
+        {
+          "id": "CAP-16.2",
+          "title": "Provider conformance probes over injected adapters",
+          "status": "proposed"
+        }
+      ],
+      "toolIds": [],
+      "contracts": [
+        "docs/contracts/probes.md"
+      ],
+      "tests": [],
+      "prs": [],
+      "commits": [],
+      "adr": [],
+      "decision": null,
+      "updated": "2026-11-23"
+    },
+    {
+      "id": "CAP-19",
+      "role": "touches",
+      "status": "proposed",
+      "claim": "planned",
+      "spec": "drosera/docs/capabilities/CAP-19-skill-safety-scan.md",
+      "slices": [
+        {
+          "id": "CAP-19.2",
+          "title": "Skill safety scan behavior probes",
+          "status": "proposed"
+        }
+      ],
+      "toolIds": [],
+      "contracts": [
+        "docs/contracts/probes.md"
+      ],
+      "tests": [],
+      "prs": [],
+      "commits": [],
+      "adr": [],
+      "decision": null,
+      "updated": "2026-11-23"
+    }
+  ]
+}

@@ -41,6 +41,7 @@ This is a public repository. No hostnames, addresses, ports, cluster names, cont
 - `npm test` must stay green with only this repository present. `npm run family` additionally exercises the bundle runner against the canonical workspace; its absence is a declared unknown, not an error.
 - Every verdict rule must be visible in a test. If it cannot be tested, it is a wish, and it must be labeled `planned`, not `implemented`.
 - Docs change with code or they do not change at all. There is no "docs later."
+- Same-PR ledger rule: update `docs/capabilities/index.json`, the owning capability spec, `docs/CHANGELOG.md`, and affected contract `Changes` sections in the same pull request as any capability change.
 
 ## Stay in this province
 
@@ -73,7 +74,7 @@ One working method lives here. Do not add a roster, and do not repair a sibling'
 
 ## References
 
-Read in this order: this file, `docs/charter.md`, `docs/architecture.md`, `docs/contracts/`, `docs/interop.md`, `docs/evidence/`, then `src/`. `npm test` must pass with only this repository present.
+Read in this order: this file, `docs/charter.md`, `docs/architecture.md`, `docs/contracts/`, `docs/interop.md`, `docs/capabilities/`, `docs/evidence/`, then `src/`. `npm test` must pass with only this repository present.
 
 ## Cookbook
 
