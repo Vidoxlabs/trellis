@@ -85,6 +85,29 @@ Read in this order: this file, `docs/charter.md`, `docs/architecture.md`, `docs/
 
 This recipe does not execute the siblings' tools.
 
+## Research corpora
+
+Before planning a change to a module that serves a capability, call `research_plan` with
+this repository's name. One call returns every capability's claims, the axis with the test
+that holds each decision, and the gaps already open. This repository is covered by the
+`trellis` notebook.
+
+- `research_plan <repo>` is the planning call; `research_for <capability>` (for example
+  `CAP-04.3`) narrows to one, `research_axis <id>` gives the full decision with its
+  options and the test that fails if it is reversed, `research_card <id>` the verbatim
+  quote, and `research_challenge <term>` the evidence against behaviour already shipped.
+- `research_queue` lists the gaps already recorded. Check it first so you do not re-raise
+  one, and so you can see which capabilities are already blocked.
+- A capability the plan calls `untouched` has neither a claim nor a gap. Call
+  `research_raise` with the capability, the slice and the acceptance test it blocks, then
+  stop that slice and report it. Do not plan it on general knowledge.
+
+The tools are read-only apart from `research_raise`, and every call is recorded, so an
+unconsulted plan is visible. Funding, syncing, labelling and source deletion belong to
+extraction and are not exposed to you: never cite a source a card did not return, and
+never edit `intel/research/`. The full rule is the research corpora rule in the workspace
+`AGENTS.md`, one directory up.
+
 ## MCP
 
 This repository is not an MCP server. Do not commit an MCP configuration, a server address, or a credential. Probes call injected subjects. They do not open a remote service.
