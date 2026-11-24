@@ -1,3 +1,10 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/trellis-banner-dark.svg">
+  <img src=".github/assets/trellis-banner.svg" alt="Trellis banner: a lattice with five check-points, and the tagline Multi-point tests for the family." width="1280">
+</picture>
+
+Multi-point tests for the family
+
 # trellis
 
 Multi-point testing for the agent family: shape, behavior, consistency, operational.
@@ -69,3 +76,5 @@ Tests use the Node built-in runner. Adding a probe means adding the test that ho
 ## License
 
 MIT
+
+The Vidoxlabs name and mark are trademarks of Vidoxlabs LLC. They are not covered by this repository's MIT license.
