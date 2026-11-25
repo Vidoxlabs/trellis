@@ -1,3 +1,5 @@
+<!-- Managed file. Propose changes by pull request; they are carried into the shared templates. hash: 3e7b074da8522873 -->
+
 # Trellis workspace
 
 ## What this is
