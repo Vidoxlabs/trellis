@@ -7,9 +7,9 @@ Multi-point tests for the family
 
 # trellis
 
-Multi-point testing for the agent family: shape, behavior, consistency, operational.
+Multi-point testing for the Vivarium systems: shape, behavior, consistency, operational.
 
-Trellis is the testing member of the bloom agent family. Every member repository keeps its own tests; trellis checks the family from the outside, from four points each: **shape** (the public surface is what it claims), **behavior** (the load-bearing invariants hold under direct calls), **consistency** (the siblings agree where they claim to, one grammar, shared conventions), and **operational** (each test suite runs green when actually run). Verdicts are pass, fail, or unknown. A fail always outranks an unknown, an absent checkout is declared unknown, and health claims are dated runs kept as evidence, not standing truths.
+Trellis is the testing system of Vivarium, the personal agent platform. Every member repository keeps its own tests; trellis checks the family from the outside, from four points each: **shape** (the public surface is what it claims), **behavior** (the load-bearing invariants hold under direct calls), **consistency** (the siblings agree where they claim to, one grammar, shared conventions), and **operational** (each test suite runs green when actually run). Verdicts are pass, fail, or unknown. A fail always outranks an unknown, an absent checkout is declared unknown, and health claims are dated runs kept as evidence, not standing truths.
 
 ## The name
 
@@ -40,7 +40,7 @@ The bundle runner, `scripts/family.mjs` (`npm run family`), wires the grid to th
 
 ## The family
 
-The family follows one design law: ordinary botanical words for public products, mirroring five flower-named personas ([the law](https://github.com/Vidoxlabs/capillary/blob/main/docs/family.md)).
+Vivarium is the product. Its systems follow one naming law: ordinary botanical words that say what each system does ([the law](https://github.com/Vidoxlabs/capillary/blob/main/docs/family.md)).
 
 | Name | Province |
 | :--- | :--- |
@@ -50,10 +50,11 @@ The family follows one design law: ordinary botanical words for public products,
 | [`aestivation`](https://github.com/Vidoxlabs/aestivation) | Plans, verdicts, and the gate before assembly |
 | [`drosera`](https://github.com/Vidoxlabs/drosera) | Tool faces, skills, hooks, cookbooks |
 | `trellis` (this repo) | Multi-point testing with dated evidence |
-| [`bloom`](https://github.com/Vidoxlabs/bloom) | The team workspace harness |
+| [`bloom`](https://github.com/Vidoxlabs/bloom) | Vivarium's user interface: the app a person opens |
+| [`vivarium`](https://github.com/Vidoxlabs/vivarium) | The product's umbrella: pins the seven systems at exact commits |
 | [`docs`](https://github.com/Vidoxlabs/docs) | Family documentation, synced from every public repository |
 
-The line grows against the trellis: the products are the plants; this is the lattice they are checked against.
+The line grows against the trellis: the systems are the plants; this is the lattice they are checked against.
 
 ## Documentation
 
